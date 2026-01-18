@@ -96,7 +96,7 @@ if [ -f "${PROJECT_ROOT}/brand.conf" ]; then
     source "${PROJECT_ROOT}/brand.conf"
     set +a
 fi
-BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
+BRAND_NAME="${IME_BRAND_NAME:-SuYan}"
 
 echo ""
 echo "============================================"

@@ -10,8 +10,8 @@
 #   derived_data_path: Path to Xcode derived data (default: build)
 #
 # Environment Variables:
-#   IME_BRAND_NAME        - App display name (default: InputZ)
-#   IME_BRAND_IDENTIFIER  - Bundle identifier (default: cn.zhangjh.inputmethod.InputZ)
+#   IME_BRAND_NAME        - App display name (default: SuYan)
+#   IME_BRAND_IDENTIFIER  - Bundle identifier (default: cn.zhangjh.inputmethod.SuYan)
 #                           NOTE: Must contain "inputmethod" for macOS recognition
 #
 # Examples:
@@ -29,9 +29,9 @@ DERIVED_DATA_PATH="${1:-build}"
 # ============================================
 # Brand Configuration - Read from environment
 # ============================================
-BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
+BRAND_NAME="${IME_BRAND_NAME:-SuYan}"
 # Note: The identifier MUST contain "inputmethod" for macOS to recognize it
-BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
+BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.SuYan}"
 BRAND_INPUT_SOURCE_ID="${BRAND_IDENTIFIER}"
 BRAND_INPUT_SOURCE_ID="${BRAND_IDENTIFIER}"
 INSTALL_LOCATION='/Library/Input Methods'

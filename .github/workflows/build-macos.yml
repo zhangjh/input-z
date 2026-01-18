@@ -44,8 +44,8 @@ jobs:
           set +a
           
           # Set defaults
-          IME_BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
-          IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
+          IME_BRAND_NAME="${IME_BRAND_NAME:-SuYan}"
+          IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.SuYan}"
           
           # Get version from tag, workflow input, or brand.conf
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then

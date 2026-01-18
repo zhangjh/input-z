@@ -19,8 +19,8 @@
 #
 # Environment Variables:
 #   IME_VERSION           - Version number (default: 1.0.0)
-#   IME_BRAND_NAME        - App display name (default: InputZ)
-#   IME_BRAND_IDENTIFIER  - Bundle identifier (default: cn.zhangjh.inputmethod.InputZ)
+#   IME_BRAND_NAME        - App display name (default: SuYan)
+#   IME_BRAND_IDENTIFIER  - Bundle identifier (default: cn.zhangjh.inputmethod.SuYan)
 #                           NOTE: Must contain "inputmethod" for macOS recognition
 #   DEV_ID                - Apple Developer ID for signing
 #
@@ -51,10 +51,10 @@ if [ -f "${BRAND_CONF}" ]; then
 fi
 
 # Apply defaults for required variables (if not set in brand.conf or environment)
-export IME_BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
+export IME_BRAND_NAME="${IME_BRAND_NAME:-SuYan}"
 # Note: The identifier MUST contain "inputmethod" for macOS to recognize it as an input method
-# Format: domain.company.inputmethod.name (e.g., cn.zhangjh.inputmethod.InputZ)
-export IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
+# Format: domain.company.inputmethod.name (e.g., cn.zhangjh.inputmethod.SuYan)
+export IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.SuYan}"
 export IME_REQUIRE_LOGOUT="${IME_REQUIRE_LOGOUT:-false}"
 export IME_AUTO_OPEN_SETTINGS="${IME_AUTO_OPEN_SETTINGS:-true}"
 export IME_PREBUILD_RIME="${IME_PREBUILD_RIME:-true}"
