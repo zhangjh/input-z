@@ -1,0 +1,423 @@
+name: Build macOS Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  # librime prebuilt version
+  RIME_VERSION: '1.16.0'
+  RIME_GIT_HASH: 'a251145'
+  SPARKLE_VERSION: '2.6.2'
+
+jobs:
+  build:
+    name: Build macOS Package
+    runs-on: macos-14  # Apple Silicon runner (M1)
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Load brand configuration
+        id: brand
+        run: |
+          # Source brand.conf and export variables
+          set -a
+          source brand.conf
+          set +a
+          
+          # Set defaults
+          IME_BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
+          IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
+          
+          # Get version from tag, workflow input, or brand.conf
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            IME_VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            IME_VERSION="${{ github.event.inputs.version }}"
+          else
+            IME_VERSION="${IME_VERSION:-1.0.0}"
+          fi
+          
+          echo "brand_name=${IME_BRAND_NAME}" >> $GITHUB_OUTPUT
+          echo "brand_identifier=${IME_BRAND_IDENTIFIER}" >> $GITHUB_OUTPUT
+          echo "version=${IME_VERSION}" >> $GITHUB_OUTPUT
+          
+          echo "Brand: ${IME_BRAND_NAME}"
+          echo "Identifier: ${IME_BRAND_IDENTIFIER}"
+          echo "Version: ${IME_VERSION}"
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/squirrel/download
+          key: macos-deps-rime-${{ env.RIME_VERSION }}-sparkle-${{ env.SPARKLE_VERSION }}
+          restore-keys: |
+            macos-deps-rime-${{ env.RIME_VERSION }}-
+
+      - name: Download dependencies
+        run: |
+          cd deps/squirrel
+          
+          # Create download directory
+          mkdir -p download
+          cd download
+          
+          # Download librime
+          RIME_ARCHIVE="rime-${RIME_GIT_HASH}-macOS-universal.tar.bz2"
+          if [ ! -f "${RIME_ARCHIVE}" ]; then
+            echo "Downloading librime ${RIME_VERSION}..."
+            curl -LO "https://github.com/rime/librime/releases/download/${RIME_VERSION}/${RIME_ARCHIVE}"
+          fi
+          tar --bzip2 -xf "${RIME_ARCHIVE}"
+          
+          # Download librime deps
+          RIME_DEPS_ARCHIVE="rime-deps-${RIME_GIT_HASH}-macOS-universal.tar.bz2"
+          if [ ! -f "${RIME_DEPS_ARCHIVE}" ]; then
+            echo "Downloading librime deps..."
+            curl -LO "https://github.com/rime/librime/releases/download/${RIME_VERSION}/${RIME_DEPS_ARCHIVE}"
+          fi
+          tar --bzip2 -xf "${RIME_DEPS_ARCHIVE}"
+          
+          # Download Sparkle
+          SPARKLE_ARCHIVE="Sparkle-${SPARKLE_VERSION}.tar.xz"
+          if [ ! -f "${SPARKLE_ARCHIVE}" ]; then
+            echo "Downloading Sparkle ${SPARKLE_VERSION}..."
+            curl -LO "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/${SPARKLE_ARCHIVE}"
+          fi
+          tar -xJf "${SPARKLE_ARCHIVE}"
+
+      - name: Setup librime
+        run: |
+          cd deps/squirrel
+          
+          # Remove old librime if exists
+          rm -rf librime
+          
+          # Create librime directory structure
+          mkdir -p librime/dist librime/share librime/include librime/src
+          
+          # Copy prebuilt files
+          cp -R download/dist/* librime/dist/
+          cp -R download/share/opencc librime/share/
+          cp -R download/dist/include/* librime/include/
+          
+          # Copy source headers from submodule
+          cp -R "${GITHUB_WORKSPACE}/deps/librime/src/rime" librime/src/
+          
+          # Setup directories
+          mkdir -p Frameworks lib bin
+          
+          # Copy Sparkle framework
+          cp -R download/Sparkle.framework Frameworks/
+          
+          # Copy rime binaries
+          cp -L librime/dist/lib/librime.1.dylib lib/
+          cp -pR librime/dist/lib/rime-plugins lib/
+          cp librime/dist/bin/rime_deployer bin/
+          cp librime/dist/bin/rime_dict_manager bin/
+          
+          # Fix install names
+          install_name_tool -change @rpath/librime.1.dylib @loader_path/../Frameworks/librime.1.dylib bin/rime_deployer 2>/dev/null || true
+          install_name_tool -change @rpath/librime.1.dylib @loader_path/../Frameworks/librime.1.dylib bin/rime_dict_manager 2>/dev/null || true
+
+      - name: Setup plum and Rime data
+        run: |
+          cd deps/squirrel
+          
+          # Initialize plum submodule
+          git submodule update --init plum
+          
+          # Copy rime-install to bin
+          cp plum/rime-install bin/
+          
+          # Install default Rime recipes
+          rime_dir=plum/output bash plum/rime-install
+          
+          # Setup SharedSupport
+          mkdir -p SharedSupport
+          cp -R plum/output/* SharedSupport/ 2>/dev/null || true
+          cp -R librime/share/opencc SharedSupport/
+          
+          # Copy custom Rime configurations
+          if [ -d "${GITHUB_WORKSPACE}/data/rime" ]; then
+            cp -R "${GITHUB_WORKSPACE}/data/rime/"* SharedSupport/
+          fi
+          
+          # Copy rime-ice dictionaries
+          if [ -d "${GITHUB_WORKSPACE}/deps/rime-ice/cn_dicts" ]; then
+            mkdir -p SharedSupport/cn_dicts
+            cp -R "${GITHUB_WORKSPACE}/deps/rime-ice/cn_dicts/"* SharedSupport/cn_dicts/
+          fi
+          
+          if [ -d "${GITHUB_WORKSPACE}/deps/rime-ice/en_dicts" ]; then
+            mkdir -p SharedSupport/en_dicts
+            cp -R "${GITHUB_WORKSPACE}/deps/rime-ice/en_dicts/"* SharedSupport/en_dicts/
+          fi
+
+      - name: Build IME core modules
+        run: |
+          mkdir -p build/macos-Release
+          cd build/macos-Release
+          
+          cmake "${GITHUB_WORKSPACE}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_MACOS_FRONTEND=OFF \
+            -DENABLE_CLOUD_SYNC=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="13.0"
+          
+          cmake --build . --parallel $(sysctl -n hw.ncpu)
+
+      - name: Copy integration files
+        run: |
+          cd deps/squirrel
+          
+          mkdir -p ime_integration/lib ime_integration/include
+          
+          # Copy static libraries
+          cp "${GITHUB_WORKSPACE}/build/macos-Release/lib/libime_storage.a" ime_integration/lib/
+          cp "${GITHUB_WORKSPACE}/build/macos-Release/lib/libime_frequency.a" ime_integration/lib/
+          cp "${GITHUB_WORKSPACE}/build/macos-Release/lib/libime_input.a" ime_integration/lib/
+          cp "${GITHUB_WORKSPACE}/build/macos-Release/lib/libime_learning.a" ime_integration/lib/
+          cp "${GITHUB_WORKSPACE}/build/macos-Release/lib/libime_platform_macos.a" ime_integration/lib/
+          
+          # Copy headers
+          cp "${GITHUB_WORKSPACE}/src/platform/macos/squirrel_integration.h" ime_integration/include/
+          cp "${GITHUB_WORKSPACE}/src/core/storage/local_storage.h" ime_integration/include/
+          cp "${GITHUB_WORKSPACE}/src/core/frequency/frequency_manager.h" ime_integration/include/
+          cp "${GITHUB_WORKSPACE}/src/core/input/candidate_merger.h" ime_integration/include/
+          cp "${GITHUB_WORKSPACE}/src/core/input/input_state.h" ime_integration/include/
+          cp "${GITHUB_WORKSPACE}/src/core/learning/auto_learner.h" ime_integration/include/
+
+      - name: Apply brand customization
+        env:
+          IME_BRAND_NAME: ${{ steps.brand.outputs.brand_name }}
+          IME_BRAND_IDENTIFIER: ${{ steps.brand.outputs.brand_identifier }}
+        run: |
+          cd deps/squirrel
+          
+          # Backup original files
+          cp sources/InputSource.swift sources/InputSource.swift.bak
+          cp sources/Main.swift sources/Main.swift.bak
+          cp sources/SquirrelApplicationDelegate.swift sources/SquirrelApplicationDelegate.swift.bak
+          cp resources/Info.plist resources/Info.plist.bak
+          
+          # Replace input source IDs
+          sed -i '' "s|im.rime.inputmethod.Squirrel.Hans|${IME_BRAND_IDENTIFIER}.Hans|g" sources/InputSource.swift
+          sed -i '' "s|im.rime.inputmethod.Squirrel.Hant|${IME_BRAND_IDENTIFIER}.Hant|g" sources/InputSource.swift
+          sed -i '' "s|Squirrel method|${IME_BRAND_NAME} method|g" sources/InputSource.swift
+          
+          # Replace app paths
+          sed -i '' "s|/Library/Input Library/Squirrel.app|/Library/Input Methods/${IME_BRAND_NAME}.app|g" sources/Main.swift
+          sed -i '' "s|rime.squirrel|rime.${IME_BRAND_NAME}|g" sources/Main.swift
+          
+          # Replace RIME traits
+          sed -i '' "s|rime.squirrel|rime.${IME_BRAND_NAME}|g" sources/SquirrelApplicationDelegate.swift
+          sed -i '' "s|\"Squirrel\", to: \\\\.distribution_code_name|\"${IME_BRAND_NAME}\", to: \\\\.distribution_code_name|g" sources/SquirrelApplicationDelegate.swift
+          sed -i '' "s|\"鼠鬚管\", to: \\\\.distribution_name|\"${IME_BRAND_NAME}\", to: \\\\.distribution_name|g" sources/SquirrelApplicationDelegate.swift
+          
+          # Update Info.plist
+          sed -i '' "s|Squirrel_Connection|${IME_BRAND_NAME}_Connection|g" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName ${IME_BRAND_NAME}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${IME_BRAND_IDENTIFIER}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable ${IME_BRAND_NAME}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :TISInputSourceID ${IME_BRAND_IDENTIFIER}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :InputMethodServerControllerClass ${IME_BRAND_NAME}.SquirrelInputController" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :InputMethodServerDelegateClass ${IME_BRAND_NAME}.SquirrelInputController" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" resources/Info.plist 2>/dev/null || true
+          
+          # Update ComponentInputModeDict
+          OLD_HANS_ID="im.rime.inputmethod.Squirrel.Hans"
+          OLD_HANT_ID="im.rime.inputmethod.Squirrel.Hant"
+          NEW_HANS_ID="${IME_BRAND_IDENTIFIER}.Hans"
+          NEW_HANT_ID="${IME_BRAND_IDENTIFIER}.Hant"
+          
+          /usr/libexec/PlistBuddy -c "Copy :ComponentInputModeDict:tsInputModeListKey:${OLD_HANS_ID} :ComponentInputModeDict:tsInputModeListKey:${NEW_HANS_ID}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsInputModeListKey:${NEW_HANS_ID}:TISInputSourceID ${NEW_HANS_ID}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :ComponentInputModeDict:tsInputModeListKey:${OLD_HANS_ID}" resources/Info.plist
+          
+          /usr/libexec/PlistBuddy -c "Copy :ComponentInputModeDict:tsInputModeListKey:${OLD_HANT_ID} :ComponentInputModeDict:tsInputModeListKey:${NEW_HANT_ID}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsInputModeListKey:${NEW_HANT_ID}:TISInputSourceID ${NEW_HANT_ID}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :ComponentInputModeDict:tsInputModeListKey:${OLD_HANT_ID}" resources/Info.plist
+          
+          /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:0 ${NEW_HANS_ID}" resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :ComponentInputModeDict:tsVisibleInputModeOrderedArrayKey:1 ${NEW_HANT_ID}" resources/Info.plist
+
+      - name: Build Squirrel app
+        env:
+          IME_BRAND_NAME: ${{ steps.brand.outputs.brand_name }}
+          IME_BRAND_IDENTIFIER: ${{ steps.brand.outputs.brand_identifier }}
+        run: |
+          cd deps/squirrel
+          
+          # Clean previous build
+          rm -rf build/Build/Products
+          rm -rf build/Build/Intermediates.noindex
+          
+          # Prepare build
+          mkdir -p build
+          bash package/add_data_files
+          
+          # Build with IME integration
+          IME_LIBS="-L${PWD}/ime_integration/lib -lime_platform_macos -lime_learning -lime_input -lime_frequency -lime_storage -lsqlite3 -lc++"
+          IME_HEADER_SEARCH_PATHS="${PWD}/ime_integration/include"
+          
+          xcodebuild -project Squirrel.xcodeproj \
+            -configuration Release \
+            -scheme Squirrel \
+            -derivedDataPath build \
+            COMPILER_INDEX_STORE_ENABLE=YES \
+            PRODUCT_NAME="${IME_BRAND_NAME}" \
+            PRODUCT_BUNDLE_IDENTIFIER="${IME_BRAND_IDENTIFIER}" \
+            INFOPLIST_FILE="${PWD}/resources/Info.plist" \
+            OTHER_LDFLAGS="-lrime.1 ${IME_LIBS}" \
+            HEADER_SEARCH_PATHS="\$(inherited) ${IME_HEADER_SEARCH_PATHS}" \
+            build
+
+      - name: Restore source files
+        if: always()
+        run: |
+          cd deps/squirrel
+          [ -f sources/InputSource.swift.bak ] && mv sources/InputSource.swift.bak sources/InputSource.swift || true
+          [ -f sources/Main.swift.bak ] && mv sources/Main.swift.bak sources/Main.swift || true
+          [ -f sources/SquirrelApplicationDelegate.swift.bak ] && mv sources/SquirrelApplicationDelegate.swift.bak sources/SquirrelApplicationDelegate.swift || true
+          [ -f resources/Info.plist.bak ] && mv resources/Info.plist.bak resources/Info.plist || true
+
+      - name: Post-build customization
+        env:
+          IME_BRAND_NAME: ${{ steps.brand.outputs.brand_name }}
+          IME_BRAND_IDENTIFIER: ${{ steps.brand.outputs.brand_identifier }}
+        run: |
+          cd deps/squirrel
+          BUILD_APP_PATH="build/Build/Products/Release/${IME_BRAND_NAME}.app"
+          
+          # Update localization files
+          for lproj in "${BUILD_APP_PATH}/Contents/Resources/"*.lproj; do
+            strings_file="$lproj/InfoPlist.strings"
+            if [ -f "$strings_file" ]; then
+              plutil -convert xml1 "$strings_file" 2>/dev/null || true
+              sed -i '' "s|im\.rime\.inputmethod\.Squirrel|${IME_BRAND_IDENTIFIER}|g" "$strings_file"
+              sed -i '' "s|>鼠须管<|>${IME_BRAND_NAME}<|g" "$strings_file"
+              sed -i '' "s|>鼠鬚管<|>${IME_BRAND_NAME}<|g" "$strings_file"
+              sed -i '' "s|>Squirrel<|>${IME_BRAND_NAME}<|g" "$strings_file"
+            fi
+          done
+          
+          # Re-sign the app
+          codesign --force --deep --sign - "${BUILD_APP_PATH}"
+          
+          # Copy custom Rime configurations
+          if [ -d "${GITHUB_WORKSPACE}/data/rime" ]; then
+            cp -R "${GITHUB_WORKSPACE}/data/rime/"* "${BUILD_APP_PATH}/Contents/SharedSupport/"
+          fi
+          
+          # Copy rime-ice dictionaries
+          if [ -d "${GITHUB_WORKSPACE}/deps/rime-ice/cn_dicts" ]; then
+            mkdir -p "${BUILD_APP_PATH}/Contents/SharedSupport/cn_dicts"
+            cp -R "${GITHUB_WORKSPACE}/deps/rime-ice/cn_dicts/"* "${BUILD_APP_PATH}/Contents/SharedSupport/cn_dicts/"
+          fi
+          
+          if [ -d "${GITHUB_WORKSPACE}/deps/rime-ice/en_dicts" ]; then
+            mkdir -p "${BUILD_APP_PATH}/Contents/SharedSupport/en_dicts"
+            cp -R "${GITHUB_WORKSPACE}/deps/rime-ice/en_dicts/"* "${BUILD_APP_PATH}/Contents/SharedSupport/en_dicts/"
+          fi
+
+      - name: Build installer package
+        env:
+          IME_BRAND_NAME: ${{ steps.brand.outputs.brand_name }}
+          IME_BRAND_IDENTIFIER: ${{ steps.brand.outputs.brand_identifier }}
+          IME_VERSION: ${{ steps.brand.outputs.version }}
+          IME_REQUIRE_LOGOUT: 'false'
+          IME_AUTO_OPEN_SETTINGS: 'true'
+          IME_PREBUILD_RIME: 'true'
+        run: |
+          mkdir -p output/macos
+          cd installer/macos/package
+          chmod +x make_package.sh common.sh
+          ./make_package.sh "${GITHUB_WORKSPACE}/deps/squirrel/build"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.brand.outputs.brand_name }}-${{ steps.brand.outputs.version }}-macos
+          path: output/macos/*.pkg
+          retention-days: 30
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.brand.outputs.brand_name }}-${{ steps.brand.outputs.version }}-macos-app
+          path: deps/squirrel/build/Build/Products/Release/${{ steps.brand.outputs.brand_name }}.app
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load brand configuration
+        id: brand
+        run: |
+          set -a
+          source brand.conf
+          set +a
+          
+          IME_BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
+          IME_VERSION="${GITHUB_REF#refs/tags/v}"
+          
+          echo "brand_name=${IME_BRAND_NAME}" >> $GITHUB_OUTPUT
+          echo "version=${IME_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.brand.outputs.brand_name }}-${{ steps.brand.outputs.version }}-macos
+          path: release-assets
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ steps.brand.outputs.brand_name }} v${{ steps.brand.outputs.version }}
+          draft: true
+          prerelease: false
+          files: |
+            release-assets/*.pkg
+          body: |
+            ## ${{ steps.brand.outputs.brand_name }} v${{ steps.brand.outputs.version }}
+            
+            ### 安装说明
+            1. 下载 `.pkg` 安装包
+            2. 双击运行安装程序
+            3. 按照提示完成安装
+            4. 在系统设置 > 键盘 > 输入法中添加 ${{ steps.brand.outputs.brand_name }}
+            
+            ### 系统要求
+            - macOS 13.0 (Ventura) 或更高版本
+            - Apple Silicon 或 Intel 处理器

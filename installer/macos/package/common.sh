@@ -20,6 +20,12 @@ bump_version() {
 
 # Get current app version from Xcode project
 get_app_version() {
+    # First check environment variable (for CI builds)
+    if [ -n "${IME_VERSION}" ]; then
+        echo "${IME_VERSION}"
+        return
+    fi
+    
     cd "${PROJECT_ROOT}"
     # Try to get version from agvtool
     local version=$(xcrun agvtool what-version 2>/dev/null | sed -n 'n;s/^[[:space:]]*\([0-9.]*\)$/\1/;p')
