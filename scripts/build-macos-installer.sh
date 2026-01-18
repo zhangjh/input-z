@@ -34,20 +34,35 @@
 
 set -e
 
-# Brand configuration (can be overridden by environment variables)
+# Get script directory first (needed for config file path)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ============================================
+# Load brand configuration
+# ============================================
+BRAND_CONF="${PROJECT_ROOT}/brand.conf"
+if [ -f "${BRAND_CONF}" ]; then
+    echo "Loading brand configuration from: ${BRAND_CONF}"
+    # Source the config file (only export non-comment, non-empty lines)
+    set -a  # Auto-export all variables
+    source "${BRAND_CONF}"
+    set +a
+fi
+
+# Apply defaults for required variables (if not set in brand.conf or environment)
 export IME_BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
 # Note: The identifier MUST contain "inputmethod" for macOS to recognize it as an input method
 # Format: domain.company.inputmethod.name (e.g., cn.zhangjh.inputmethod.InputZ)
 export IME_BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
+export IME_REQUIRE_LOGOUT="${IME_REQUIRE_LOGOUT:-false}"
+export IME_AUTO_OPEN_SETTINGS="${IME_AUTO_OPEN_SETTINGS:-true}"
+export IME_PREBUILD_RIME="${IME_PREBUILD_RIME:-true}"
 
 echo "============================================"
 echo "${IME_BRAND_NAME} macOS Full Build"
 echo "============================================"
 echo ""
-
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Set default version
 IME_VERSION="${IME_VERSION:-1.0.0}"
@@ -324,9 +339,19 @@ if [ $BUILD_APP -eq 1 ]; then
     sed -i '' "s|/Library/Input Library/Squirrel.app|/Library/Input Methods/${IME_BRAND_NAME}.app|g" sources/Main.swift
     sed -i '' "s|rime.squirrel|rime.${IME_BRAND_NAME}|g" sources/Main.swift
     
-    # Replace app_name in SquirrelApplicationDelegate.swift (for Rime initialization)
+    # Replace RIME traits in SquirrelApplicationDelegate.swift (for Rime initialization)
+    # This is CRITICAL: distribution_code_name and distribution_name must match
+    # to prevent conflicts with other RIME-based IMEs and ensure proper schema loading
     cp sources/SquirrelApplicationDelegate.swift sources/SquirrelApplicationDelegate.swift.bak
+    
+    # Replace app_name (used for log directory)
     sed -i '' "s|rime.squirrel|rime.${IME_BRAND_NAME}|g" sources/SquirrelApplicationDelegate.swift
+    
+    # Replace distribution_code_name - this affects installation.yaml and schema loading
+    sed -i '' "s|\"Squirrel\", to: \\\\.distribution_code_name|\"${IME_BRAND_NAME}\", to: \\\\.distribution_code_name|g" sources/SquirrelApplicationDelegate.swift
+    
+    # Replace distribution_name - this is the display name in installation info
+    sed -i '' "s|\"鼠鬚管\", to: \\\\.distribution_name|\"${IME_BRAND_NAME}\", to: \\\\.distribution_name|g" sources/SquirrelApplicationDelegate.swift
     
     # Replace identifiers in Info.plist
     sed -i '' "s|Squirrel_Connection|${IME_BRAND_NAME}_Connection|g" resources/Info.plist
@@ -337,10 +362,11 @@ if [ $BUILD_APP -eq 1 ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable ${IME_BRAND_NAME}" resources/Info.plist
     /usr/libexec/PlistBuddy -c "Set :TISInputSourceID ${IME_BRAND_IDENTIFIER}" resources/Info.plist
     
-    # Note: InputMethodServerControllerClass must match the Swift module name in the binary.
-    # The Swift module name is determined by PRODUCT_MODULE_NAME (defaults to target name "Squirrel"),
-    # NOT by PRODUCT_NAME. So we keep it as "Squirrel.SquirrelInputController".
-    # Do NOT change these values unless you also change PRODUCT_MODULE_NAME in xcodebuild.
+    # Update InputMethodServerControllerClass and InputMethodServerDelegateClass
+    # These must match the Swift module name (PRODUCT_NAME) + class name
+    # Format: "ModuleName.ClassName"
+    /usr/libexec/PlistBuddy -c "Set :InputMethodServerControllerClass ${IME_BRAND_NAME}.SquirrelInputController" resources/Info.plist
+    /usr/libexec/PlistBuddy -c "Set :InputMethodServerDelegateClass ${IME_BRAND_NAME}.SquirrelInputController" resources/Info.plist
     
     # Disable Sparkle auto-update (we'll use our own mechanism)
     /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" resources/Info.plist 2>/dev/null || true

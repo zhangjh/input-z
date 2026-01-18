@@ -56,6 +56,27 @@ echo "Registering input source..."
 # Pre-build RIME data unless disabled
 if [ -z "${RIME_NO_PREBUILD}" ]; then
     echo "Pre-building RIME data..."
+    
+    # Clean user RIME build cache to avoid conflicts with other RIME-based IMEs
+    # This ensures the new IME generates fresh build artifacts with correct distribution info
+    user_rime_dir="/Users/${login_user}/Library/Rime"
+    if [ -d "${user_rime_dir}/build" ]; then
+        echo "Cleaning user RIME build cache..."
+        rm -rf "${user_rime_dir}/build"
+    fi
+    
+    # Remove old installation.yaml if it exists from a different RIME distribution
+    # This prevents conflicts between InputZ and other RIME IMEs (like Squirrel)
+    if [ -f "${user_rime_dir}/installation.yaml" ]; then
+        if grep -q "distribution_code_name:" "${user_rime_dir}/installation.yaml" 2>/dev/null; then
+            old_distro=$(grep "distribution_code_name:" "${user_rime_dir}/installation.yaml" | cut -d: -f2 | tr -d ' ')
+            if [ "${old_distro}" != "${BRAND_NAME}" ]; then
+                echo "Detected old RIME distribution (${old_distro}), removing stale configuration..."
+                rm -f "${user_rime_dir}/installation.yaml"
+            fi
+        fi
+    fi
+    
     if [ -d "${rime_shared_data_path}" ]; then
         pushd "${rime_shared_data_path}" > /dev/null
         "${ime_executable}" --build || true

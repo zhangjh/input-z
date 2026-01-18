@@ -33,7 +33,13 @@ BRAND_NAME="${IME_BRAND_NAME:-InputZ}"
 # Note: The identifier MUST contain "inputmethod" for macOS to recognize it
 BRAND_IDENTIFIER="${IME_BRAND_IDENTIFIER:-cn.zhangjh.inputmethod.InputZ}"
 BRAND_INPUT_SOURCE_ID="${BRAND_IDENTIFIER}"
+BRAND_INPUT_SOURCE_ID="${BRAND_IDENTIFIER}"
 INSTALL_LOCATION='/Library/Input Methods'
+
+# Configurable options
+REQUIRE_LOGOUT="${IME_REQUIRE_LOGOUT:-false}"
+AUTO_OPEN_SETTINGS="${IME_AUTO_OPEN_SETTINGS:-true}"
+PREBUILD_RIME="${IME_PREBUILD_RIME:-true}"
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -217,6 +223,9 @@ POSTINSTALL_HEADER
 cat >> "${SCRIPTS_DIR}/postinstall" << POSTINSTALL_BRAND
 # Brand configuration (embedded at build time)
 BRAND_NAME="${BRAND_NAME}"
+REQUIRE_LOGOUT="${REQUIRE_LOGOUT}"
+AUTO_OPEN_SETTINGS="${AUTO_OPEN_SETTINGS}"
+PREBUILD_RIME="${PREBUILD_RIME}"
 POSTINSTALL_BRAND
 
 cat >> "${SCRIPTS_DIR}/postinstall" << 'POSTINSTALL_BODY'
@@ -262,8 +271,29 @@ echo "Registering input source..."
 "${ime_executable}" --register-input-source || true
 
 # Pre-build RIME data unless disabled
-if [ -z "${RIME_NO_PREBUILD}" ]; then
+if [ "${PREBUILD_RIME}" = "true" ] && [ -z "${RIME_NO_PREBUILD}" ]; then
     echo "Pre-building RIME data..."
+    
+    # Clean user RIME build cache to avoid conflicts with other RIME-based IMEs
+    # This ensures the new IME generates fresh build artifacts with correct distribution info
+    user_rime_dir="/Users/${login_user}/Library/Rime"
+    if [ -d "${user_rime_dir}/build" ]; then
+        echo "Cleaning user RIME build cache..."
+        rm -rf "${user_rime_dir}/build"
+    fi
+    
+    # Remove old installation.yaml if it exists from a different RIME distribution
+    # This prevents conflicts between InputZ and other RIME IMEs (like Squirrel)
+    if [ -f "${user_rime_dir}/installation.yaml" ]; then
+        if grep -q "distribution_code_name:" "${user_rime_dir}/installation.yaml" 2>/dev/null; then
+            old_distro=$(grep "distribution_code_name:" "${user_rime_dir}/installation.yaml" | cut -d: -f2 | tr -d ' ')
+            if [ "${old_distro}" != "${BRAND_NAME}" ]; then
+                echo "Detected old RIME distribution (${old_distro}), removing stale configuration..."
+                rm -f "${user_rime_dir}/installation.yaml"
+            fi
+        fi
+    fi
+    
     if [ -d "${rime_shared_data_path}" ]; then
         pushd "${rime_shared_data_path}" > /dev/null
         "${ime_executable}" --build || true
@@ -278,13 +308,29 @@ echo "Enabling input source..."
 
 echo "Post-installation completed successfully!"
 echo ""
-echo "============================================"
-echo "IMPORTANT: Please log out and log back in"
-echo "to activate ${BRAND_NAME} input method."
-echo "============================================"
 
-# Show a dialog to remind user to log out
-/usr/bin/osascript -e "display dialog \"${BRAND_NAME} 安装完成！\n\n请注销并重新登录以激活输入法。\" buttons {\"好的\"} default button 1 with title \"${BRAND_NAME} 安装程序\" with icon note" 2>/dev/null || true
+if [ "${REQUIRE_LOGOUT}" = "true" ]; then
+    echo "============================================"
+    echo "IMPORTANT: Please log out and log back in"
+    echo "to activate ${BRAND_NAME} input method."
+    echo "============================================"
+    
+    # Show a dialog to remind user to log out
+    /usr/bin/osascript -e "display dialog \"${BRAND_NAME} 安装完成！\n\n请注销并重新登录以激活输入法。\" buttons {\"好的\"} default button 1 with title \"${BRAND_NAME} 安装程序\" with icon note" 2>/dev/null || true
+else
+    echo "============================================"
+    echo "${BRAND_NAME} installed successfully."
+    echo "Please add it in System Settings > Keyboard > Input Sources."
+    echo "============================================"
+    
+    if [ "${AUTO_OPEN_SETTINGS}" = "true" ]; then
+        echo "Opening System Settings..."
+        /usr/bin/sudo -u "${login_user}" /usr/bin/open "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" || true
+        
+        # Show a gentler dialog
+        /usr/bin/osascript -e "display dialog \"${BRAND_NAME} 安装完成！\n\n如果输入法未自动出现，请在稍后打开的系统设置中点击 '+' 号手动添加。\" buttons {\"好的\"} default button 1 with title \"${BRAND_NAME} 安装程序\" with icon note" 2>/dev/null || true
+    fi
+fi
 POSTINSTALL_BODY
 
 chmod +x "${SCRIPTS_DIR}/postinstall"
@@ -292,11 +338,29 @@ chmod +x "${SCRIPTS_DIR}/postinstall"
 echo "Generated install scripts with brand: ${BRAND_NAME}"
 echo ""
 
+echo "Generated install scripts with brand: ${BRAND_NAME}"
+echo ""
+
+# Generate PackageInfo dynamically
+PACKAGE_INFO_PATH="${OUTPUT_DIR}/PackageInfo"
+echo "Generating PackageInfo..."
+echo "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\"?>" > "${PACKAGE_INFO_PATH}"
+
+if [ "${REQUIRE_LOGOUT}" = "true" ]; then
+    # Standard logout action
+    echo "<pkg-info postinstall-action=\"logout\"/>" >> "${PACKAGE_INFO_PATH}"
+    echo "  Added postinstall-action=\"logout\""
+else
+    # No action required (just close the installer)
+    echo "<pkg-info format-version=\"2\"/>" >> "${PACKAGE_INFO_PATH}"
+    echo "  No postinstall-action set"
+fi
+
 # Build the package
 echo "Building package..."
 
 pkgbuild \
-    --info "${SCRIPT_DIR}/PackageInfo" \
+    --info "${PACKAGE_INFO_PATH}" \
     --root "${BUILD_ROOT}/Build/Products/Release" \
     --filter '.*\.swiftmodule' \
     --filter '.*\.dSYM' \
