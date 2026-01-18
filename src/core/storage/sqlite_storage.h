@@ -65,6 +65,10 @@ public:
     bool DeleteWordFrequency(const std::string& word,
                              const std::string& pinyin) override;
     bool ClearAllWordFrequencies() override;
+    int CleanupLowFrequencyWords(int frequencyThreshold = 1,
+                                 int daysThreshold = 30) override;
+    int EnforceFrequencyLimit(int maxRecords = 50000) override;
+    int GetWordFrequencyCount() override;
 
     // 配置操作
     std::string GetConfig(const std::string& key,

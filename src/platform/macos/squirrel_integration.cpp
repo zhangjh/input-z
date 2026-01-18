@@ -100,6 +100,13 @@ bool SquirrelIntegration::Initialize(const SquirrelIntegrationConfig& config) {
     }
 
     initialized_ = true;
+
+    // 初始化完成后执行词频清理
+    int cleaned = CleanupWordFrequencies();
+    if (cleaned > 0) {
+        // 可以添加日志记录
+    }
+
     return true;
 }
 
@@ -329,6 +336,24 @@ bool SquirrelIntegration::SetDictionaryEnabled(const std::string& dictId,
     return storage_->SetDictionaryEnabled(dictId, enabled);
 }
 
+int SquirrelIntegration::CleanupWordFrequencies() {
+    if (!initialized_ || !storage_) {
+        return 0;
+    }
+
+    int totalCleaned = 0;
+
+    // 1. 清理低频旧词：frequency <= 1 且超过 30 天未更新
+    int lowFreqCleaned = storage_->CleanupLowFrequencyWords(1, 30);
+    totalCleaned += lowFreqCleaned;
+
+    // 2. 限制总量：最多保留 500000 条
+    int limitCleaned = storage_->EnforceFrequencyLimit(500000);
+    totalCleaned += limitCleaned;
+
+    return totalCleaned;
+}
+
 }  // namespace macos
 }  // namespace platform
 }  // namespace ime
@@ -472,6 +497,36 @@ int ImeIntegration_SetConfig(const char* key, const char* value) {
         return -1;
     }
     return SquirrelIntegration::Instance().SetConfig(key, value) ? 0 : -1;
+}
+
+int ImeIntegration_GetUserTopWords(const char* pinyin,
+                                    int limit,
+                                    char** outBuffer,
+                                    int bufferSize) {
+    if (!pinyin || !outBuffer || bufferSize <= 0) {
+        return 0;
+    }
+
+    auto words = SquirrelIntegration::Instance().GetUserTopWords(pinyin, limit);
+    
+    int count = std::min(static_cast<int>(words.size()), bufferSize);
+    for (int i = 0; i < count; ++i) {
+        outBuffer[i] = strdup(words[i].c_str());
+    }
+    
+    return count;
+}
+
+void ImeIntegration_FreeUserTopWords(char** buffer, int count) {
+    if (!buffer) {
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (buffer[i]) {
+            free(buffer[i]);
+            buffer[i] = nullptr;
+        }
+    }
 }
 
 #endif  // PLATFORM_MACOS

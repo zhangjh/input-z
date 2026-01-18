@@ -39,8 +39,7 @@ CREATE TABLE IF NOT EXISTS user_word_frequency (
     word TEXT NOT NULL,
     pinyin TEXT NOT NULL,
     frequency INTEGER DEFAULT 1,
-    last_used_at INTEGER DEFAULT (strftime('%s', 'now')),
-    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER DEFAULT (strftime('%s', 'now')),
     UNIQUE(word, pinyin)
 );
 )";
@@ -632,11 +631,11 @@ bool SqliteStorage::IncrementWordFrequency(const std::string& word,
 
     // 使用 UPSERT 语法：如果存在则更新，否则插入
     const char* sql = R"(
-        INSERT INTO user_word_frequency (word, pinyin, frequency, last_used_at, created_at)
-        VALUES (?, ?, 1, ?, ?)
+        INSERT INTO user_word_frequency (word, pinyin, frequency, updated_at)
+        VALUES (?, ?, 1, strftime('%s', 'now'))
         ON CONFLICT(word, pinyin) DO UPDATE SET
             frequency = frequency + 1,
-            last_used_at = excluded.last_used_at;
+            updated_at = strftime('%s', 'now');
     )";
 
     sqlite3_stmt* stmt = PrepareStatement(sql);
@@ -644,12 +643,8 @@ bool SqliteStorage::IncrementWordFrequency(const std::string& word,
         return false;
     }
 
-    int64_t now = GetCurrentTimestamp();
-
     sqlite3_bind_text(stmt, 1, word.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, pinyin.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 3, now);
-    sqlite3_bind_int64(stmt, 4, now);
 
     int rc = sqlite3_step(stmt);
     FinalizeStatement(stmt);
@@ -698,10 +693,10 @@ std::vector<WordFrequency> SqliteStorage::GetTopFrequencyWords(
     }
 
     const char* sql = R"(
-        SELECT word, pinyin, frequency, last_used_at, created_at
+        SELECT word, pinyin, frequency
         FROM user_word_frequency 
         WHERE pinyin = ?
-        ORDER BY frequency DESC, last_used_at DESC
+        ORDER BY frequency DESC
         LIMIT ?;
     )";
 
@@ -718,8 +713,6 @@ std::vector<WordFrequency> SqliteStorage::GetTopFrequencyWords(
         wf.word = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         wf.pinyin = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         wf.frequency = sqlite3_column_int(stmt, 2);
-        wf.lastUsedAt = sqlite3_column_int64(stmt, 3);
-        wf.createdAt = sqlite3_column_int64(stmt, 4);
 
         result.push_back(std::move(wf));
     }
@@ -738,9 +731,9 @@ std::vector<WordFrequency> SqliteStorage::GetAllWordFrequencies() {
     }
 
     const char* sql = R"(
-        SELECT word, pinyin, frequency, last_used_at, created_at
+        SELECT word, pinyin, frequency
         FROM user_word_frequency 
-        ORDER BY frequency DESC, last_used_at DESC;
+        ORDER BY frequency DESC;
     )";
 
     sqlite3_stmt* stmt = PrepareStatement(sql);
@@ -753,8 +746,6 @@ std::vector<WordFrequency> SqliteStorage::GetAllWordFrequencies() {
         wf.word = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         wf.pinyin = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         wf.frequency = sqlite3_column_int(stmt, 2);
-        wf.lastUsedAt = sqlite3_column_int64(stmt, 3);
-        wf.createdAt = sqlite3_column_int64(stmt, 4);
 
         result.push_back(std::move(wf));
     }
@@ -796,6 +787,113 @@ bool SqliteStorage::ClearAllWordFrequencies() {
     }
 
     return ExecuteSql("DELETE FROM user_word_frequency;");
+}
+
+int SqliteStorage::CleanupLowFrequencyWords(int frequencyThreshold,
+                                            int daysThreshold) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_) {
+        return 0;
+    }
+
+    // 删除 frequency <= threshold 且超过 days 天未更新的记录
+    const char* sql = R"(
+        DELETE FROM user_word_frequency 
+        WHERE frequency <= ? 
+        AND updated_at < strftime('%s', 'now') - ? * 86400;
+    )";
+
+    sqlite3_stmt* stmt = PrepareStatement(sql);
+    if (!stmt) {
+        return 0;
+    }
+
+    sqlite3_bind_int(stmt, 1, frequencyThreshold);
+    sqlite3_bind_int(stmt, 2, daysThreshold);
+
+    int rc = sqlite3_step(stmt);
+    int deletedCount = 0;
+    if (rc == SQLITE_DONE) {
+        deletedCount = sqlite3_changes(db_);
+    }
+
+    FinalizeStatement(stmt);
+    return deletedCount;
+}
+
+int SqliteStorage::EnforceFrequencyLimit(int maxRecords) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_) {
+        return 0;
+    }
+
+    // 获取当前记录数
+    const char* countSql = "SELECT COUNT(*) FROM user_word_frequency;";
+    sqlite3_stmt* countStmt = PrepareStatement(countSql);
+    if (!countStmt) {
+        return 0;
+    }
+
+    int currentCount = 0;
+    if (sqlite3_step(countStmt) == SQLITE_ROW) {
+        currentCount = sqlite3_column_int(countStmt, 0);
+    }
+    FinalizeStatement(countStmt);
+
+    if (currentCount <= maxRecords) {
+        return 0;  // 未超限，无需清理
+    }
+
+    // 删除超出限制的低频词（保留高频词）
+    // 按 frequency DESC 排序，保留前 maxRecords 条
+    const char* deleteSql = R"(
+        DELETE FROM user_word_frequency 
+        WHERE id NOT IN (
+            SELECT id FROM user_word_frequency 
+            ORDER BY frequency DESC 
+            LIMIT ?
+        );
+    )";
+
+    sqlite3_stmt* deleteStmt = PrepareStatement(deleteSql);
+    if (!deleteStmt) {
+        return 0;
+    }
+
+    sqlite3_bind_int(deleteStmt, 1, maxRecords);
+
+    int rc = sqlite3_step(deleteStmt);
+    int deletedCount = 0;
+    if (rc == SQLITE_DONE) {
+        deletedCount = sqlite3_changes(db_);
+    }
+
+    FinalizeStatement(deleteStmt);
+    return deletedCount;
+}
+
+int SqliteStorage::GetWordFrequencyCount() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_) {
+        return 0;
+    }
+
+    const char* sql = "SELECT COUNT(*) FROM user_word_frequency;";
+    sqlite3_stmt* stmt = PrepareStatement(sql);
+    if (!stmt) {
+        return 0;
+    }
+
+    int count = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        count = sqlite3_column_int(stmt, 0);
+    }
+
+    FinalizeStatement(stmt);
+    return count;
 }
 
 // ==================== 配置操作 ====================

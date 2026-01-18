@@ -42,8 +42,6 @@ struct WordFrequency {
     std::string word;     // 词
     std::string pinyin;   // 拼音
     int frequency;        // 频率
-    int64_t lastUsedAt;   // 最后使用时间戳
-    int64_t createdAt;    // 创建时间戳
 };
 
 // 下载任务状态
@@ -140,6 +138,16 @@ public:
 
     // 清空所有词频数据
     virtual bool ClearAllWordFrequencies() = 0;
+
+    // 清理低频词（删除 frequency <= threshold 且超过 days 天未更新的记录）
+    virtual int CleanupLowFrequencyWords(int frequencyThreshold = 1,
+                                         int daysThreshold = 30) = 0;
+
+    // 限制词频记录总量（保留高频词，删除低频词）
+    virtual int EnforceFrequencyLimit(int maxRecords = 50000) = 0;
+
+    // 获取词频记录总数
+    virtual int GetWordFrequencyCount() = 0;
 
     // ==================== 配置操作 ====================
 

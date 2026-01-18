@@ -136,6 +136,12 @@ public:
     // 设置词库启用状态
     bool SetDictionaryEnabled(const std::string& dictId, bool enabled);
 
+    // ==================== 词频维护 ====================
+
+    // 执行词频清理（删除低频旧词 + 限制总量）
+    // @return 删除的记录数
+    int CleanupWordFrequencies();
+
 private:
     // 私有构造函数（单例）
     SquirrelIntegration();
@@ -236,6 +242,20 @@ int ImeIntegration_GetConfig(const char* key,
 // 设置配置值
 // @return 0 成功，非 0 失败
 int ImeIntegration_SetConfig(const char* key, const char* value);
+
+// 获取用户高频词
+// @param pinyin 拼音
+// @param limit 返回数量限制
+// @param outBuffer 输出缓冲区（调用者分配，每个元素需要 free）
+// @param bufferSize 缓冲区大小
+// @return 实际返回的词数量
+int ImeIntegration_GetUserTopWords(const char* pinyin,
+                                    int limit,
+                                    char** outBuffer,
+                                    int bufferSize);
+
+// 释放 GetUserTopWords 返回的内存
+void ImeIntegration_FreeUserTopWords(char** buffer, int count);
 
 #ifdef __cplusplus
 }  // extern "C"

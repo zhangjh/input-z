@@ -69,6 +69,7 @@ deps/squirrel/SharedSupport/
 deps/squirrel/data/opencc/
 deps/squirrel/data/plum/
 deps/squirrel/package/*.pkg
+deps/squirrel/ime_integration/
 
 # Weasel build artifacts
 deps/weasel/build/

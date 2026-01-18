@@ -321,6 +321,54 @@ if [ $BUILD_APP -eq 1 ]; then
     fi
     
     # ============================================
+    # Build and integrate IME core modules
+    # ============================================
+    echo "Building IME core modules..."
+    
+    IME_BUILD_DIR="${PROJECT_ROOT}/build/macos-Release"
+    mkdir -p "${IME_BUILD_DIR}"
+    cd "${IME_BUILD_DIR}"
+    
+    cmake "${PROJECT_ROOT}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTS=OFF \
+        -DBUILD_MACOS_FRONTEND=OFF \
+        -DENABLE_CLOUD_SYNC=OFF \
+        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="13.0"
+    
+    cmake --build . --parallel $(sysctl -n hw.ncpu)
+    
+    echo "IME core modules built successfully."
+    
+    # Copy integration library and headers to Squirrel
+    echo "Copying integration files to Squirrel..."
+    cd "${PROJECT_ROOT}/deps/squirrel"
+    
+    # Create directories
+    mkdir -p ime_integration/lib
+    mkdir -p ime_integration/include
+    
+    # Copy static libraries
+    cp "${IME_BUILD_DIR}/lib/libime_storage.a" ime_integration/lib/
+    cp "${IME_BUILD_DIR}/lib/libime_frequency.a" ime_integration/lib/
+    cp "${IME_BUILD_DIR}/lib/libime_input.a" ime_integration/lib/
+    cp "${IME_BUILD_DIR}/lib/libime_learning.a" ime_integration/lib/
+    cp "${IME_BUILD_DIR}/lib/libime_platform_macos.a" ime_integration/lib/
+    
+    # Copy headers
+    cp "${PROJECT_ROOT}/src/platform/macos/squirrel_integration.h" ime_integration/include/
+    cp "${PROJECT_ROOT}/src/core/storage/local_storage.h" ime_integration/include/
+    cp "${PROJECT_ROOT}/src/core/frequency/frequency_manager.h" ime_integration/include/
+    cp "${PROJECT_ROOT}/src/core/input/candidate_merger.h" ime_integration/include/
+    cp "${PROJECT_ROOT}/src/core/input/input_state.h" ime_integration/include/
+    cp "${PROJECT_ROOT}/src/core/learning/auto_learner.h" ime_integration/include/
+    
+    echo "Integration files copied."
+    
+    cd "${PROJECT_ROOT}/deps/squirrel"
+    
+    # ============================================
     # Apply brand customization to source code
     # ============================================
     echo "Applying brand customization to source code..."
@@ -410,6 +458,12 @@ if [ $BUILD_APP -eq 1 ]; then
     # Build Squirrel
     mkdir -p build
     bash package/add_data_files
+    
+    # Build with IME integration libraries
+    # Note: We need to link our static libraries, SQLite3, and C++ runtime
+    IME_LIBS="-L${PWD}/ime_integration/lib -lime_platform_macos -lime_learning -lime_input -lime_frequency -lime_storage -lsqlite3 -lc++"
+    IME_HEADER_SEARCH_PATHS="${PWD}/ime_integration/include"
+    
     xcodebuild -project Squirrel.xcodeproj \
         -configuration Release \
         -scheme Squirrel \
@@ -418,6 +472,8 @@ if [ $BUILD_APP -eq 1 ]; then
         PRODUCT_NAME="${IME_BRAND_NAME}" \
         PRODUCT_BUNDLE_IDENTIFIER="${IME_BRAND_IDENTIFIER}" \
         INFOPLIST_FILE="${PWD}/resources/Info.plist" \
+        OTHER_LDFLAGS="-lrime.1 ${IME_LIBS}" \
+        HEADER_SEARCH_PATHS="\$(inherited) ${IME_HEADER_SEARCH_PATHS}" \
         build
     
     BUILD_RESULT=$?
