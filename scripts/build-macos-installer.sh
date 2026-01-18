@@ -321,6 +321,29 @@ if [ $BUILD_APP -eq 1 ]; then
     fi
     
     # ============================================
+    # Copy custom icons if available
+    # ============================================
+    ICON_GEN_DIR="${PROJECT_ROOT}/resources/icons/generated"
+    
+    if [ -d "${ICON_GEN_DIR}/Rime.icon" ]; then
+        echo "Copying custom app icon..."
+        rm -rf Rime.icon
+        cp -R "${ICON_GEN_DIR}/Rime.icon" Rime.icon/
+        echo "  - Custom Rime.icon applied"
+    fi
+    
+    if [ -d "${ICON_GEN_DIR}/menubar" ]; then
+        echo "Copying custom menubar icons..."
+        cp "${ICON_GEN_DIR}/menubar/"*.png resources/ 2>/dev/null || true
+        # Copy rime.pdf (menu bar icon used by Info.plist)
+        if [ -f "${ICON_GEN_DIR}/menubar/rime.pdf" ]; then
+            cp "${ICON_GEN_DIR}/menubar/rime.pdf" resources/
+            echo "  - Custom rime.pdf (menu bar icon) applied"
+        fi
+        echo "  - Custom menubar icons applied"
+    fi
+    
+    # ============================================
     # Build and integrate IME core modules
     # ============================================
     echo "Building IME core modules..."
@@ -517,6 +540,19 @@ if [ $BUILD_APP -eq 1 ]; then
     # Re-sign the app after modifying resources
     echo "Re-signing app..."
     codesign --force --deep --sign - "${BUILD_APP_PATH}"
+    
+    # ============================================
+    # Replace app icon with custom icon
+    # Xcode generates Rime.icns from Rime.icon, but the format may not work
+    # So we replace it with our pre-generated icns file
+    # ============================================
+    if [ -f "${PROJECT_ROOT}/resources/icons/generated/SuYan.icns" ]; then
+        echo "Replacing app icon with custom icon..."
+        cp "${PROJECT_ROOT}/resources/icons/generated/SuYan.icns" "${BUILD_APP_PATH}/Contents/Resources/Rime.icns"
+        echo "  - Custom Rime.icns applied"
+        # Re-sign after icon replacement
+        codesign --force --deep --sign - "${BUILD_APP_PATH}"
+    fi
     
     # ============================================
     # Copy custom Rime configurations to build output
