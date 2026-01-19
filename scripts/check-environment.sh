@@ -30,10 +30,53 @@ echo "=== 必需工具 ==="
 
 MISSING=0
 
-check_tool "git" "brew install git (macOS) / apt install git (Linux)" || MISSING=1
-check_tool "cmake" "brew install cmake (macOS) / apt install cmake (Linux)" || MISSING=1
+# 根据操作系统选择安装提示
+case "$OS" in
+    Darwin)
+        GIT_HINT="brew install git"
+        CMAKE_HINT="brew install cmake"
+        NINJA_HINT="brew install ninja"
+        CCACHE_HINT="brew install ccache"
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        GIT_HINT="winget install Git.Git"
+        CMAKE_HINT="winget install Kitware.CMake"
+        NINJA_HINT="winget install Ninja-build.Ninja"
+        CCACHE_HINT="winget install ccache.ccache"
+        ;;
+    *)
+        GIT_HINT="apt install git"
+        CMAKE_HINT="apt install cmake"
+        NINJA_HINT="apt install ninja-build"
+        CCACHE_HINT="apt install ccache"
+        ;;
+esac
 
-if [ "$OS" == "Darwin" ]; then
+check_tool "git" "$GIT_HINT" || MISSING=1
+check_tool "cmake" "$CMAKE_HINT" || MISSING=1
+
+if [[ "$OS" == MINGW* ]] || [[ "$OS" == MSYS* ]] || [[ "$OS" == CYGWIN* ]]; then
+    echo ""
+    echo "=== Windows 特定检查 ==="
+    
+    # 检查 Visual Studio 或 MSVC
+    if command -v cl &> /dev/null; then
+        echo "✓ MSVC (cl.exe): 已找到"
+    else
+        echo "○ MSVC (cl.exe): 未在 PATH 中找到"
+        echo "  提示: 请从 Visual Studio Developer Command Prompt 运行，或安装 Visual Studio Build Tools"
+        echo "  安装方法: winget install Microsoft.VisualStudio.2022.BuildTools"
+    fi
+    
+    # 检查 Windows SDK
+    if [ -d "/c/Program Files (x86)/Windows Kits/10" ] || [ -d "/c/Program Files/Windows Kits/10" ]; then
+        echo "✓ Windows SDK: 已安装"
+    else
+        echo "○ Windows SDK: 未找到"
+        echo "  提示: 通过 Visual Studio Installer 安装 Windows 10/11 SDK"
+    fi
+
+elif [ "$OS" == "Darwin" ]; then
     echo ""
     echo "=== macOS 特定检查 ==="
     
@@ -58,8 +101,8 @@ fi
 echo ""
 echo "=== 可选工具 ==="
 
-check_tool "ninja" "brew install ninja (macOS) / apt install ninja-build (Linux)" || true
-check_tool "ccache" "brew install ccache (macOS) / apt install ccache (Linux)" || true
+check_tool "ninja" "$NINJA_HINT" || true
+check_tool "ccache" "$CCACHE_HINT" || true
 
 echo ""
 echo "=== Git Submodules 状态 ==="
