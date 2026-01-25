@@ -75,36 +75,6 @@ increment_version() {
     echo "${major}.${minor}.${patch}"
 }
 
-# 更新 brand.conf 中的版本号
-update_brand_version() {
-    local new_version="$1"
-    sed -i '' "s/^IME_VERSION=\"[^\"]*\"/IME_VERSION=\"${new_version}\"/" "${BRAND_CONF}"
-    log_info "已更新 brand.conf 版本号为 ${new_version}"
-}
-
-# 更新 CMakeLists.txt 中的版本号
-update_cmake_version() {
-    local new_version="$1"
-    local cmake_file="${PROJECT_ROOT}/CMakeLists.txt"
-    sed -i '' "s/VERSION [0-9]*\.[0-9]*\.[0-9]*/VERSION ${new_version}/" "${cmake_file}"
-    log_info "已更新 CMakeLists.txt 版本号为 ${new_version}"
-}
-
-# 检查工作区是否干净
-check_clean_workspace() {
-    if [ -n "$(git status --porcelain)" ]; then
-        log_warning "工作区有未提交的更改"
-        git status --short
-        echo ""
-        read -p "是否继续？(y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_error "已取消"
-            exit 1
-        fi
-    fi
-}
-
 # 主函数
 main() {
     cd "${PROJECT_ROOT}"
@@ -112,12 +82,6 @@ main() {
     # 检查是否在 git 仓库中
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
         log_error "当前目录不是 git 仓库"
-        exit 1
-    fi
-    
-    # 检查 brand.conf 是否存在
-    if [ ! -f "${BRAND_CONF}" ]; then
-        log_error "brand.conf 不存在"
         exit 1
     fi
     
@@ -133,22 +97,14 @@ main() {
     local input="$1"
     
     if [ -z "${input}" ]; then
-        # 无参数：使用 brand.conf 中的版本
         new_version="${brand_version}"
     elif [[ "${input}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # 直接指定版本号
         new_version="${input}"
     elif [ "${input}" = "major" ] || [ "${input}" = "minor" ] || [ "${input}" = "patch" ]; then
-        # 递增指定类型（基于 brand.conf 版本）
         new_version=$(increment_version "${brand_version}" "${input}")
     else
         log_error "无效的参数: ${input}"
         echo "用法: $0 [版本号|major|minor|patch]"
-        echo "  (无参数)  使用 brand.conf 中的版本"
-        echo "  patch     递增补丁版本"
-        echo "  minor     递增次版本号"
-        echo "  major     递增主版本号"
-        echo "  1.2.3     直接指定版本号"
         exit 1
     fi
     
@@ -170,50 +126,23 @@ main() {
         exit 1
     fi
     
-    # 检查工作区
-    check_clean_workspace
-    
-    # 更新版本号（如果有变化）
-    local need_commit=false
-    
-    if [ "${brand_version}" != "${new_version}" ]; then
-        update_brand_version "${new_version}"
-        git add "${BRAND_CONF}"
-        need_commit=true
-    fi
-    
-    # 同步更新 CMakeLists.txt
-    local cmake_version=$(grep -E "^\s*VERSION\s+" "${PROJECT_ROOT}/CMakeLists.txt" | head -1 | sed 's/.*VERSION\s*\([0-9.]*\).*/\1/')
-    if [ "${cmake_version}" != "${new_version}" ]; then
-        update_cmake_version "${new_version}"
-        git add CMakeLists.txt
-        need_commit=true
-    fi
-    
-    if [ "${need_commit}" = true ]; then
-        git commit -m "chore: bump version to ${new_version}"
-        log_success "已提交版本更新"
-    fi
-    
     # 创建 tag
     git tag -a "v${new_version}" -m "Release v${new_version}"
     log_success "已创建 tag: v${new_version}"
     
-    # 推送
+    # 推送 tag
     echo ""
-    read -p "是否推送到远程仓库？(Y/n) " -n 1 -r
+    read -p "是否推送 tag 到远程仓库？(Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        git push origin master
         git push origin "v${new_version}"
-        log_success "已推送到远程仓库"
+        log_success "已推送 tag"
         echo ""
         log_info "GitHub Actions 将自动开始构建..."
         log_info "构建完成后，请到 GitHub Releases 页面发布草稿"
     else
-        log_warning "未推送到远程仓库"
-        echo "手动推送命令:"
-        echo "  git push && git push origin v${new_version}"
+        log_warning "未推送"
+        echo "手动推送: git push origin v${new_version}"
     fi
     
     echo ""
