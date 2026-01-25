@@ -281,6 +281,19 @@ create_pkg() {
     log_info "复制 Bundle 到安装根目录..."
     cp -R "${bundle_path}" "${install_root}/Library/Input Methods/"
     
+    # 对应用进行 ad-hoc 签名（macOS 安全策略要求）
+    log_info "对应用进行 ad-hoc 签名..."
+    local installed_bundle="${install_root}/Library/Input Methods/SuYan.app"
+    
+    # 使用 --force --deep --sign - 进行 ad-hoc 签名
+    codesign --force --deep --sign - "${installed_bundle}" 2>/dev/null || {
+        log_warning "ad-hoc 签名失败，尝试移除签名..."
+        # 如果 ad-hoc 签名失败，尝试移除签名
+        find "${installed_bundle}/Contents/Frameworks" -name "*.framework" -exec codesign --remove-signature {} \; 2>/dev/null || true
+        find "${installed_bundle}/Contents/Frameworks" -name "*.dylib" -exec codesign --remove-signature {} \; 2>/dev/null || true
+        codesign --remove-signature "${installed_bundle}" 2>/dev/null || true
+    }
+    
     # 创建组件包
     log_info "创建组件包..."
     pkgbuild \

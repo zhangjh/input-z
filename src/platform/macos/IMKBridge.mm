@@ -33,6 +33,7 @@
 #endif
 
 #include "candidate_window.h"
+#include "layout_manager.h"
 
 using namespace suyan;
 
@@ -312,6 +313,14 @@ int SuYanIMK_ConvertModifiers(NSEventModifierFlags modifierFlags) {
         return NO;
     }
     
+    // Ctrl+Shift+L: 切换横排/竖排布局
+    if ((modifierFlags & NSEventModifierFlagControl) && 
+        (modifierFlags & NSEventModifierFlagShift) &&
+        keyCode == kVK_ANSI_L) {
+        [self toggleLayout:nil];
+        return YES;
+    }
+    
     // Control 键组合也直接放行（如 Ctrl+A/E 等 Emacs 风格快捷键）
     if (modifierFlags & NSEventModifierFlagControl) {
         NSLog(@"SuYanInputController: Control key combo detected, passing through (keyCode=%hu)", keyCode);
@@ -553,6 +562,21 @@ int SuYanIMK_ConvertModifiers(NSEventModifierFlags modifierFlags) {
     modeItem.target = self;
     [menu addItem:modeItem];
 
+    // 横排/竖排切换
+    NSString* layoutTitle = @"切换横排/竖排 (⌃⇧L)";
+    auto& layoutManager = LayoutManager::instance();
+    if (layoutManager.isHorizontal()) {
+        layoutTitle = @"切换为竖排 (⌃⇧L)";
+    } else {
+        layoutTitle = @"切换为横排 (⌃⇧L)";
+    }
+    NSMenuItem* layoutItem = [[NSMenuItem alloc]
+        initWithTitle:layoutTitle
+        action:@selector(toggleLayout:)
+        keyEquivalent:@""];
+    layoutItem.target = self;
+    [menu addItem:layoutItem];
+
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem* settingsItem = [[NSMenuItem alloc]
@@ -594,6 +618,11 @@ int SuYanIMK_ConvertModifiers(NSEventModifierFlags modifierFlags) {
 
 - (void)openSettings:(id)sender {
     NSLog(@"SuYanInputController: Open settings (not implemented)");
+}
+
+- (void)toggleLayout:(id)sender {
+    auto& layoutManager = LayoutManager::instance();
+    layoutManager.toggleLayout();
 }
 
 - (void)showAbout:(id)sender {

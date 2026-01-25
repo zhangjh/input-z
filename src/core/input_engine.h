@@ -20,6 +20,7 @@ namespace suyan {
 class IPlatformBridge;
 class RimeWrapper;
 class FrequencyManager;
+struct CandidateMenu;
 
 /**
  * 输入模式枚举

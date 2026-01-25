@@ -201,12 +201,13 @@ private:
     void drawPreedit(QPainter& painter, int& yOffset);
     void drawCandidatesHorizontal(QPainter& painter, int yOffset);
     void drawCandidatesVertical(QPainter& painter, int yOffset);
-    void drawCandidatesExpanded(QPainter& painter, int yOffset);  // 多行展开模式
+    void drawCandidatesExpanded(QPainter& painter, int yOffset);  // 横排展开模式（多行）
+    void drawCandidatesExpandedVertical(QPainter& painter, int yOffset);  // 竖排展开模式（多列）
     void drawSingleCandidate(QPainter& painter, const CandidateItem& candidate,
                              const QRect& rect, bool isHighlighted, bool isHovered);
     void drawSingleCandidateExpanded(QPainter& painter, const CandidateItem& candidate,
                                       const QRect& rect, bool isHighlighted, bool isHovered,
-                                      bool isCurrentRow, int colIndex);
+                                      bool isCurrentGroup, int indexInGroup);
 
     // 布局计算
     QRect calculateCandidateRect(int index) const;

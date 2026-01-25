@@ -12,6 +12,7 @@
 #endif
 
 #include "input_engine.h"
+#include "config_manager.h"
 #include "platform_bridge.h"
 #include "rime_wrapper.h"
 #include <cctype>
@@ -227,6 +228,15 @@ bool InputEngine::handleChineseMode(int keyCode, int modifiers) {
     if (isExpanded_ && keyCode != KeyCode::BackSpace) {
         resetExpandedState();
     }
+    
+    // 如果输入了会改变候选词列表的按键（字母、退格等），重置导航状态
+    // 这样下次使用方向键时，高亮会从第一个候选词开始
+    if (isAlphaKey(keyCode) || keyCode == KeyCode::BackSpace) {
+        // 清空导航状态，但不调用 resetExpandedState() 因为那会重置 RIME 页面
+        expandedCandidates_.clear();
+        currentRow_ = 0;
+        currentCol_ = 0;
+    }
 
     // 在处理按键之前，记录候选词信息用于词频更新
     std::string selectedCandidateText;
@@ -272,6 +282,11 @@ bool InputEngine::handleChineseMode(int keyCode, int modifiers) {
         
         // 通过回调提交文本（回调会调用 MacOSBridge::commitText）
         notifyCommitText(commitText);
+        
+        // 提交后重置导航状态
+        expandedCandidates_.clear();
+        currentRow_ = 0;
+        currentCol_ = 0;
         
         // 调试：检查提交后是否还有剩余输入
         std::string remainingInput = rime.getRawInput(sessionId_);
@@ -543,7 +558,16 @@ InputState InputEngine::getState() const {
         state.currentRow = currentRow_ - windowStartRow;
         state.currentCol = currentCol_;
     } else {
-        state.highlightedIndex = menu.highlightedIndex;
+        // 未展开模式：如果用户使用了方向键导航，使用我们维护的高亮索引
+        // 否则使用 RIME 的高亮索引
+        if (!expandedCandidates_.empty()) {
+            // 用户已经使用过方向键，使用我们维护的索引
+            state.highlightedIndex = currentCol_;
+            state.currentRow = 0;
+            state.currentCol = currentCol_;
+        } else {
+            state.highlightedIndex = menu.highlightedIndex;
+        }
         
         // 转换候选词
         std::vector<InputCandidate> originalCandidates;
@@ -811,9 +835,14 @@ bool InputEngine::handleArrowKeys(int keyCode) {
     
     int pageSize = menu.pageSize > 0 ? menu.pageSize : 9;
     
-    // 如果还没有展开，先加载候选词
-    if (!isExpanded_) {
-        expandedCandidates_.clear();
+    // 获取当前布局类型
+    auto& configMgr = ConfigManager::instance();
+    LayoutType layoutType = configMgr.getLayoutConfig().type;
+    bool isVertical = (layoutType == LayoutType::Vertical);
+    
+    // 如果还没有加载候选词，先加载当前页的候选词
+    // 注意：只在 expandedCandidates_ 为空时初始化，避免每次按键都重置
+    if (expandedCandidates_.empty()) {
         expandedRows_ = 1;
         currentRow_ = 0;
         currentCol_ = 0;
@@ -832,26 +861,16 @@ bool InputEngine::handleArrowKeys(int keyCode) {
     auto loadMoreCandidates = [&](int neededCandidates) {
         while (static_cast<int>(expandedCandidates_.size()) < neededCandidates) {
             auto currentMenu = rime.getCandidateMenu(sessionId_);
-            std::cout << "InputEngine: loadMoreCandidates - current size=" << expandedCandidates_.size()
-                      << ", needed=" << neededCandidates
-                      << ", pageIndex=" << currentMenu.pageIndex
-                      << ", isLastPage=" << currentMenu.isLastPage << std::endl;
             if (currentMenu.isLastPage) {
-                std::cout << "InputEngine: Reached last page, stopping" << std::endl;
                 break;
             }
             
             bool changed = rime.changePage(sessionId_, false);
-            std::cout << "InputEngine: changePage result=" << changed << std::endl;
             if (!changed) {
-                std::cout << "InputEngine: changePage failed, stopping" << std::endl;
                 break;
             }
             
             currentMenu = rime.getCandidateMenu(sessionId_);
-            std::cout << "InputEngine: After changePage - pageIndex=" << currentMenu.pageIndex
-                      << ", candidates=" << currentMenu.candidates.size() << std::endl;
-            
             for (const auto& c : currentMenu.candidates) {
                 InputCandidate candidate;
                 candidate.text = c.text;
@@ -860,156 +879,136 @@ bool InputEngine::handleArrowKeys(int keyCode) {
                 expandedCandidates_.push_back(candidate);
             }
         }
-        std::cout << "InputEngine: loadMoreCandidates done, total=" << expandedCandidates_.size() << std::endl;
     };
     
-    switch (keyCode) {
-        case KeyCode::Down: {
-            if (!isExpanded_) {
-                // 首次按下向下键，直接展开5行，光标移到第二行
-                isExpanded_ = true;
-                currentRow_ = 1;
-                currentCol_ = 0;
-                
-                // 加载5行的候选词
-                loadMoreCandidates(5 * pageSize);
-                
-                // 计算实际行数（最多显示5行）
-                int totalRows = (static_cast<int>(expandedCandidates_.size()) + pageSize - 1) / pageSize;
-                expandedRows_ = std::min(5, totalRows);
-                
-                // 确保有第二行，如果没有则不进入展开模式但仍然消费这个按键
-                if (expandedRows_ < 2) {
-                    isExpanded_ = false;
-                    expandedRows_ = 1;
-                    currentRow_ = 0;
-                    currentCol_ = 0;
-                    // 不调用 resetExpandedState()，避免重置 RIME 状态
-                    // 返回 true 表示我们处理了这个按键，不要传递给 RIME
-                    return true;
-                }
-                
-                std::cout << "InputEngine: Entering expanded mode, displayRows=" << expandedRows_ 
-                          << ", totalCandidates=" << expandedCandidates_.size() << std::endl;
-            } else {
-                // 已经在展开模式
-                int totalRows = (static_cast<int>(expandedCandidates_.size()) + pageSize - 1) / pageSize;
-                
-                // 计算当前显示窗口的起始行
-                int windowStartRow = std::max(0, currentRow_ - (expandedRows_ - 1));
-                if (currentRow_ < expandedRows_ - 1) {
-                    windowStartRow = 0;
-                }
-                
-                if (currentRow_ < totalRows - 1) {
-                    // 还有下一行
-                    currentRow_++;
-                    
-                    // 如果需要，加载更多候选词
-                    int neededCandidates = (currentRow_ + 2) * pageSize;  // 预加载一行
-                    loadMoreCandidates(neededCandidates);
-                    
-                    // 更新总行数
-                    totalRows = (static_cast<int>(expandedCandidates_.size()) + pageSize - 1) / pageSize;
-                    
-                    // 确保列索引有效
-                    int rowStart = currentRow_ * pageSize;
-                    int rowEnd = std::min(rowStart + pageSize, static_cast<int>(expandedCandidates_.size()));
-                    int rowSize = rowEnd - rowStart;
-                    if (currentCol_ >= rowSize) {
-                        currentCol_ = rowSize - 1;
-                    }
-                    
-                    std::cout << "InputEngine: Moved down to row " << currentRow_ 
-                              << ", totalRows=" << totalRows << std::endl;
-                } else {
-                    // 尝试加载更多
-                    int oldSize = static_cast<int>(expandedCandidates_.size());
-                    loadMoreCandidates(oldSize + pageSize);
-                    
-                    if (static_cast<int>(expandedCandidates_.size()) > oldSize) {
-                        // 成功加载了更多，移动到下一行
-                        currentRow_++;
-                        currentCol_ = 0;
-                        std::cout << "InputEngine: Loaded more, moved to row " << currentRow_ << std::endl;
-                    }
-                }
-            }
-            break;
-        }
+    // 辅助函数：获取当前组（行/列）的候选词数量
+    // 横排模式：组 = 行，竖排模式：组 = 列
+    auto getGroupSize = [&](int group) -> int {
+        int groupStart = group * pageSize;
+        int groupEnd = std::min(groupStart + pageSize, static_cast<int>(expandedCandidates_.size()));
+        return groupEnd - groupStart;
+    };
+    
+    // 辅助函数：获取总组数
+    auto getTotalGroups = [&]() -> int {
+        return (static_cast<int>(expandedCandidates_.size()) + pageSize - 1) / pageSize;
+    };
+    
+    // ========== 未展开状态 ==========
+    if (!isExpanded_) {
+        // 判断是否是展开键
+        // 横排模式：下键展开
+        // 竖排模式：右键展开
+        bool isExpandKey = isVertical ? (keyCode == KeyCode::Right) : (keyCode == KeyCode::Down);
         
-        case KeyCode::Up: {
-            if (!isExpanded_) {
-                // 未展开时，向上键不做任何事，但消费这个按键避免传递给 RIME
-                return true;
-            }
+        // 判断是否是组内移动键（未展开时在当前组内移动高亮）
+        // 横排模式：左右键移动
+        // 竖排模式：上下键移动
+        bool isMoveNext = isVertical ? (keyCode == KeyCode::Down) : (keyCode == KeyCode::Right);
+        bool isMovePrev = isVertical ? (keyCode == KeyCode::Up) : (keyCode == KeyCode::Left);
+        
+        if (isExpandKey) {
+            // 展开候选词框
+            isExpanded_ = true;
+            currentRow_ = 1;  // 移动到第二组
+            currentCol_ = 0;
             
-            if (currentRow_ > 0) {
-                currentRow_--;
-                int rowStart = currentRow_ * pageSize;
-                int rowEnd = std::min(rowStart + pageSize, static_cast<int>(expandedCandidates_.size()));
-                int rowSize = rowEnd - rowStart;
-                if (currentCol_ >= rowSize) {
-                    currentCol_ = rowSize - 1;
-                }
-                std::cout << "InputEngine: Moved up to row " << currentRow_ << std::endl;
-            }
-            // 在第一行按向上，不做任何事（不退出展开模式）
-            break;
-        }
-        
-        case KeyCode::Right: {
-            if (!isExpanded_) {
-                isExpanded_ = true;
+            // 加载5组的候选词
+            loadMoreCandidates(5 * pageSize);
+            
+            // 计算实际组数（最多显示5组）
+            int totalGroups = getTotalGroups();
+            expandedRows_ = std::min(5, totalGroups);
+            
+            // 确保有第二组，如果没有则不进入展开模式
+            if (expandedRows_ < 2) {
+                isExpanded_ = false;
                 expandedRows_ = 1;
                 currentRow_ = 0;
                 currentCol_ = 0;
-            } else {
-                int rowStart = currentRow_ * pageSize;
-                int rowEnd = std::min(rowStart + pageSize, static_cast<int>(expandedCandidates_.size()));
-                int rowSize = rowEnd - rowStart;
-                
-                if (currentCol_ < rowSize - 1) {
-                    currentCol_++;
-                } else {
-                    // 到行尾，尝试跳到下一行行首
-                    int totalRows = (static_cast<int>(expandedCandidates_.size()) + pageSize - 1) / pageSize;
-                    if (currentRow_ < totalRows - 1) {
-                        currentRow_++;
-                        currentCol_ = 0;
-                    } else {
-                        // 尝试加载更多
-                        int oldSize = static_cast<int>(expandedCandidates_.size());
-                        loadMoreCandidates(oldSize + pageSize);
-                        if (static_cast<int>(expandedCandidates_.size()) > oldSize) {
-                            currentRow_++;
-                            currentCol_ = 0;
-                        }
-                    }
-                }
+                return true;  // 消费按键但不展开
             }
-            break;
-        }
-        
-        case KeyCode::Left: {
-            if (!isExpanded_) {
-                // 未展开时，左键不做任何事，但消费这个按键避免传递给 RIME
-                return true;
+        } else if (isMoveNext) {
+            // 在当前组内向下/向右移动高亮
+            int groupSize = getGroupSize(currentRow_);
+            if (currentCol_ < groupSize - 1) {
+                currentCol_++;
             }
-            
+            // 到末尾不做任何事
+        } else if (isMovePrev) {
+            // 在当前组内向上/向左移动高亮
             if (currentCol_ > 0) {
                 currentCol_--;
-            } else if (currentRow_ > 0) {
-                currentRow_--;
-                int rowStart = currentRow_ * pageSize;
-                int rowEnd = std::min(rowStart + pageSize, static_cast<int>(expandedCandidates_.size()));
-                currentCol_ = rowEnd - rowStart - 1;
             }
-            break;
+            // 到开头不做任何事
+        } else {
+            // 其他方向键（横排的上键，竖排的左键）在未展开时不做任何事
+            return true;
         }
+    }
+    // ========== 已展开状态 ==========
+    else {
+        int totalGroups = getTotalGroups();
         
-        default:
-            return false;
+        // 判断按键类型
+        // 横排模式：上下键切换组（行），左右键组内移动
+        // 竖排模式：左右键切换组（列），上下键组内移动
+        bool isNextGroup = isVertical ? (keyCode == KeyCode::Right) : (keyCode == KeyCode::Down);
+        bool isPrevGroup = isVertical ? (keyCode == KeyCode::Left) : (keyCode == KeyCode::Up);
+        bool isMoveNext = isVertical ? (keyCode == KeyCode::Down) : (keyCode == KeyCode::Right);
+        bool isMovePrev = isVertical ? (keyCode == KeyCode::Up) : (keyCode == KeyCode::Left);
+        
+        if (isNextGroup) {
+            // 移动到下一组
+            if (currentRow_ < totalGroups - 1) {
+                currentRow_++;
+                
+                // 如果需要，加载更多候选词
+                int neededCandidates = (currentRow_ + 2) * pageSize;
+                loadMoreCandidates(neededCandidates);
+                
+                // 确保组内索引有效
+                int groupSize = getGroupSize(currentRow_);
+                if (currentCol_ >= groupSize) {
+                    currentCol_ = groupSize - 1;
+                }
+            } else {
+                // 尝试加载更多
+                int oldSize = static_cast<int>(expandedCandidates_.size());
+                loadMoreCandidates(oldSize + pageSize);
+                
+                if (static_cast<int>(expandedCandidates_.size()) > oldSize) {
+                    currentRow_++;
+                    currentCol_ = 0;
+                }
+            }
+        } else if (isPrevGroup) {
+            // 移动到上一组
+            if (currentRow_ > 0) {
+                currentRow_--;
+                
+                // 确保组内索引有效
+                int groupSize = getGroupSize(currentRow_);
+                if (currentCol_ >= groupSize) {
+                    currentCol_ = groupSize - 1;
+                }
+            }
+            // 在第一组时不做任何事
+        } else if (isMoveNext) {
+            // 在当前组内向下/向右移动
+            int groupSize = getGroupSize(currentRow_);
+            
+            if (currentCol_ < groupSize - 1) {
+                currentCol_++;
+            }
+            // 到组尾不跳转到下一组，保持在当前位置
+        } else if (isMovePrev) {
+            // 在当前组内向上/向左移动
+            if (currentCol_ > 0) {
+                currentCol_--;
+            }
+            // 到组头不跳转到上一组，保持在当前位置
+        }
     }
     
     updateState();

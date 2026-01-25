@@ -137,30 +137,70 @@ QSize CandidateView::calculateMinimumSize() const {
         int candidateHeight = calculateCandidateHeight();
         
         if (isExpanded_) {
-            // 多行展开模式
-            int rowCount = std::min(expandedRows_, 
+            // 展开模式：根据布局类型计算尺寸
+            int groupCount = std::min(expandedRows_, 
                                     (static_cast<int>(candidates_.size()) + pageSize_ - 1) / pageSize_);
             
-            // 计算每行的最大宽度
-            int maxRowWidth = 0;
-            for (int row = 0; row < rowCount; ++row) {
-                int rowWidth = 0;
-                int startIdx = row * pageSize_;
-                int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+            if (layoutType_ == LayoutType::Vertical) {
+                // 竖排展开：多列布局
+                // 每列有 pageSize_ 个候选词，共 groupCount 列
                 
-                for (int i = startIdx; i < endIdx; ++i) {
-                    rowWidth += calculateCandidateWidth(candidates_[i]);
-                    rowWidth += theme_.candidateSpacing;
+                // 计算每列的最大宽度
+                std::vector<int> colWidths(groupCount, 0);
+                for (int col = 0; col < groupCount; ++col) {
+                    int startIdx = col * pageSize_;
+                    int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+                    for (int i = startIdx; i < endIdx; ++i) {
+                        int w = calculateCandidateWidth(candidates_[i]);
+                        if (w > colWidths[col]) {
+                            colWidths[col] = w;
+                        }
+                    }
                 }
-                if (endIdx > startIdx) {
-                    rowWidth -= theme_.candidateSpacing;
+                
+                // 总宽度 = 所有列宽度之和 + 列间距
+                int totalWidth = 0;
+                for (int col = 0; col < groupCount; ++col) {
+                    totalWidth += colWidths[col];
+                    if (col < groupCount - 1) {
+                        totalWidth += theme_.candidateSpacing;
+                    }
                 }
-                maxRowWidth = std::max(maxRowWidth, rowWidth);
+                width = std::max(width, totalWidth);
+                
+                // 高度 = pageSize_ 个候选词的高度
+                int maxRowsInAnyCol = 0;
+                for (int col = 0; col < groupCount; ++col) {
+                    int startIdx = col * pageSize_;
+                    int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+                    int rowsInCol = endIdx - startIdx;
+                    maxRowsInAnyCol = std::max(maxRowsInAnyCol, rowsInCol);
+                }
+                height += maxRowsInAnyCol * candidateHeight;
+                height += (maxRowsInAnyCol - 1) * theme_.candidateSpacing;
+            } else {
+                // 横排展开：多行布局（原有逻辑）
+                // 计算每行的最大宽度
+                int maxRowWidth = 0;
+                for (int row = 0; row < groupCount; ++row) {
+                    int rowWidth = 0;
+                    int startIdx = row * pageSize_;
+                    int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+                    
+                    for (int i = startIdx; i < endIdx; ++i) {
+                        rowWidth += calculateCandidateWidth(candidates_[i]);
+                        rowWidth += theme_.candidateSpacing;
+                    }
+                    if (endIdx > startIdx) {
+                        rowWidth -= theme_.candidateSpacing;
+                    }
+                    maxRowWidth = std::max(maxRowWidth, rowWidth);
+                }
+                
+                width = std::max(width, maxRowWidth);
+                height += groupCount * candidateHeight;
+                height += (groupCount - 1) * theme_.candidateSpacing;
             }
-            
-            width = std::max(width, maxRowWidth);
-            height += rowCount * candidateHeight;
-            height += (rowCount - 1) * theme_.candidateSpacing;
         } else if (layoutType_ == LayoutType::Horizontal) {
             // 横排：计算总宽度
             int totalWidth = 0;
@@ -225,8 +265,12 @@ void CandidateView::paintEvent(QPaintEvent* /*event*/) {
     
     // 绘制候选词
     if (isExpanded_) {
-        // 多行展开模式
-        drawCandidatesExpanded(painter, yOffset);
+        // 展开模式：根据布局类型选择绘制方法
+        if (layoutType_ == LayoutType::Vertical) {
+            drawCandidatesExpandedVertical(painter, yOffset);
+        } else {
+            drawCandidatesExpanded(painter, yOffset);
+        }
     } else if (layoutType_ == LayoutType::Horizontal) {
         drawCandidatesHorizontal(painter, yOffset);
     } else {
@@ -355,26 +399,91 @@ void CandidateView::drawCandidatesExpanded(QPainter& painter, int yOffset) {
         int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
         
         // 当前行高亮显示数字，其他行数字灰色
-        bool isCurrentRow = (row == currentRow_);
+        bool isCurrentGroup = (row == currentRow_);
         
         for (int i = startIdx; i < endIdx; ++i) {
             const auto& candidate = candidates_[i];
-            int colIndex = i - startIdx;
+            int indexInGroup = i - startIdx;
             // 使用该列的最大宽度
-            int candidateWidth = colWidths[colIndex];
+            int candidateWidth = colWidths[indexInGroup];
             
             QRect rect(xOffset, yOffset, candidateWidth, candidateHeight);
             candidateRects_.push_back(rect);
             
-            bool isHighlighted = (row == currentRow_ && colIndex == currentCol_);
+            bool isHighlighted = (row == currentRow_ && indexInGroup == currentCol_);
             bool isHovered = (static_cast<int>(i) == hoveredIndex_);
             
-            drawSingleCandidateExpanded(painter, candidate, rect, isHighlighted, isHovered, isCurrentRow, colIndex);
+            drawSingleCandidateExpanded(painter, candidate, rect, isHighlighted, isHovered, isCurrentGroup, indexInGroup);
             
             xOffset += candidateWidth + theme_.candidateSpacing;
         }
         
         yOffset += candidateHeight + theme_.candidateSpacing;
+    }
+}
+
+void CandidateView::drawCandidatesExpandedVertical(QPainter& painter, int yOffset) {
+    // 竖排展开模式：多列布局
+    // 每列有 pageSize_ 个候选词，共 expandedRows_ 列
+    // currentRow_ 表示当前选中的列（组）
+    // currentCol_ 表示当前列内的索引
+    
+    if (candidates_.empty()) {
+        return;
+    }
+    
+    candidateRects_.clear();
+    candidateRects_.reserve(candidates_.size());
+    
+    int candidateHeight = calculateCandidateHeight();
+    int colCount = std::min(expandedRows_, 
+                            (static_cast<int>(candidates_.size()) + pageSize_ - 1) / pageSize_);
+    
+    // 计算每列的最大宽度
+    std::vector<int> colWidths(colCount, 0);
+    for (int col = 0; col < colCount; ++col) {
+        int startIdx = col * pageSize_;
+        int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+        for (int i = startIdx; i < endIdx; ++i) {
+            int w = calculateCandidateWidth(candidates_[i]);
+            if (w > colWidths[col]) {
+                colWidths[col] = w;
+            }
+        }
+    }
+    
+    // 计算每列的 X 起始位置
+    std::vector<int> colXOffsets(colCount);
+    int xOffset = theme_.padding;
+    for (int col = 0; col < colCount; ++col) {
+        colXOffsets[col] = xOffset;
+        xOffset += colWidths[col] + theme_.candidateSpacing;
+    }
+    
+    // 按列绘制候选词
+    for (int col = 0; col < colCount; ++col) {
+        int startIdx = col * pageSize_;
+        int endIdx = std::min(startIdx + pageSize_, static_cast<int>(candidates_.size()));
+        int currentYOffset = yOffset;
+        
+        // 当前列高亮显示数字，其他列数字灰色
+        bool isCurrentGroup = (col == currentRow_);
+        
+        for (int i = startIdx; i < endIdx; ++i) {
+            const auto& candidate = candidates_[i];
+            int indexInGroup = i - startIdx;  // 列内索引
+            
+            QRect rect(colXOffsets[col], currentYOffset, colWidths[col], candidateHeight);
+            candidateRects_.push_back(rect);
+            
+            // 高亮条件：当前列且当前列内索引匹配
+            bool isHighlighted = (col == currentRow_ && indexInGroup == currentCol_);
+            bool isHovered = (static_cast<int>(i) == hoveredIndex_);
+            
+            drawSingleCandidateExpanded(painter, candidate, rect, isHighlighted, isHovered, isCurrentGroup, indexInGroup);
+            
+            currentYOffset += candidateHeight + theme_.candidateSpacing;
+        }
     }
 }
 
@@ -445,8 +554,8 @@ void CandidateView::drawSingleCandidateExpanded(QPainter& painter,
                                                  const QRect& rect, 
                                                  bool isHighlighted, 
                                                  bool isHovered,
-                                                 bool isCurrentRow,
-                                                 int colIndex) {
+                                                 bool isCurrentGroup,
+                                                 int indexInGroup) {
     // 绘制高亮/悬停背景
     if (isHighlighted) {
         QPainterPath path;
@@ -463,20 +572,20 @@ void CandidateView::drawSingleCandidateExpanded(QPainter& painter,
     // 计算文本位置
     int xPos = rect.left() + 4;
     
-    // 绘制序号标签（所有行都显示，但非当前行用更淡的颜色）
+    // 绘制序号标签（所有组都显示，但非当前组用更淡的颜色）
     QFont labelFont = getLabelFont();
     painter.setFont(labelFont);
     QFontMetrics labelFm(labelFont);
     
-    // 使用列索引+1作为序号（1-9），使用英文点号
-    QString label = QString::number(colIndex + 1) + ".";
+    // 使用组内索引+1作为序号（1-9），使用英文点号
+    QString label = QString::number(indexInGroup + 1) + ".";
     
     if (isHighlighted) {
         painter.setPen(theme_.highlightTextColor);
-    } else if (isCurrentRow) {
+    } else if (isCurrentGroup) {
         painter.setPen(theme_.labelColor);
     } else {
-        // 非当前行，数字用更淡的颜色
+        // 非当前组，数字用更淡的颜色
         QColor dimColor = theme_.labelColor;
         dimColor.setAlpha(80);
         painter.setPen(dimColor);
