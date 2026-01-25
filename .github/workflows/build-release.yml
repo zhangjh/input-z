@@ -43,12 +43,25 @@ jobs:
         run: |
           echo "Downloading librime ${LIBRIME_VERSION}..."
           
-          # 获取 macOS universal 包的文件名（文件名包含 commit hash，需要动态获取）
-          ASSET_NAME=$(curl -s "https://api.github.com/repos/rime/librime/releases/tags/${LIBRIME_VERSION}" | \
-            jq -r '.assets[] | select(.name | test("macOS-universal.*\\.tar\\.bz2$")) | .name' | head -1)
+          # 获取 release 信息
+          RELEASE_JSON=$(curl -s "https://api.github.com/repos/rime/librime/releases/tags/${LIBRIME_VERSION}")
+          
+          # 检查 API 响应
+          if echo "${RELEASE_JSON}" | jq -e '.assets' > /dev/null 2>&1; then
+            echo "API response OK"
+          else
+            echo "Error: Failed to get release info"
+            echo "${RELEASE_JSON}"
+            exit 1
+          fi
+          
+          # 获取 macOS universal 包的文件名
+          ASSET_NAME=$(echo "${RELEASE_JSON}" | jq -r '.assets[].name' | grep "macOS-universal.*\.tar\.bz2" | head -1)
           
           if [ -z "${ASSET_NAME}" ]; then
             echo "Error: Could not find macOS universal asset for librime ${LIBRIME_VERSION}"
+            echo "Available assets:"
+            echo "${RELEASE_JSON}" | jq -r '.assets[].name'
             exit 1
           fi
           
@@ -63,7 +76,7 @@ jobs:
           
           # 查找解压后的目录结构
           echo "Extracted contents:"
-          find librime_temp -type f -name "*.h" -o -name "*.dylib" | head -20
+          find librime_temp -type f \( -name "*.h" -o -name "*.dylib" \) | head -20
           
           # 复制到 deps 目录
           mkdir -p deps/librime/include deps/librime/lib
