@@ -243,11 +243,12 @@ int SuYanIMK_ConvertModifiers(NSEventModifierFlags modifierFlags) {
                     NSString* textToCommit = [NSString stringWithUTF8String:state.rawInput.c_str()];
                     NSLog(@"SuYanInputController: About to commit: '%@'", textToCommit);
                     
-                    // 先清除 preedit，再提交文本
-                    [self clearPreedit];
+                    // 直接提交文本，insertText:replacementRange: 会自动替换 marked text
+                    // 不要先调用 clearPreedit，否则会导致文本被提交两次
                     [self commitText:textToCommit];
                     NSLog(@"SuYanInputController: Committed raw input: %s", state.rawInput.c_str());
                 }
+                // reset() 会清除 RIME 的输入状态，并通过 platformBridge_ 清除 preedit
                 g_inputEngine->reset();
                 [self hideCandidateWindow];
             }
