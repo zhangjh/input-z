@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'  # 匹配 v1.0.0, v1.0.1 等格式的 tag
 
+permissions:
+  contents: write  # 允许创建 Release
+
 env:
   QT_VERSION: '6.5.3'
   LIBRIME_VERSION: '1.16.1'
