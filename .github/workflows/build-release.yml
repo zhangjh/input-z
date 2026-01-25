@@ -287,8 +287,8 @@ jobs:
           zip -r "SuYan-Uninstaller-${VERSION}.zip" "SuYan卸载器.app"
           rm -rf "SuYan卸载器.app"
           
-          echo "Uninstaller created: ${OUTPUT_DIR}/SuYan-Uninstaller-${VERSION}.zip"
-          ls -lh "${OUTPUT_DIR}/"
+          echo "Uninstaller created"
+          ls -lh
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
