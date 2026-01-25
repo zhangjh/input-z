@@ -111,7 +111,6 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
-resources/icons/generated/
 
 # Kiro IDE 配置
 .kiro/
