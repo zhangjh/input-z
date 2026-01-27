@@ -1,5 +1,10 @@
 # SuYan Tests - CMake 配置
 
+# MSVC 需要 /utf-8 选项来正确处理 UTF-8 源文件
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Qt 环境验证测试
 add_executable(qt_env_test qt_env_test.cpp)
 target_link_libraries(qt_env_test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
@@ -88,6 +93,24 @@ if(APPLE)
     )
 endif()
 
+# 候选词窗口可见性测试
+# Task 9.4: 编写候选词窗口单元测试
+# Property 5: 空候选词窗口自动隐藏
+# Validates: Requirements 6.4
+add_executable(candidate_window_visibility_test ui/candidate_window_visibility_test.cpp)
+target_link_libraries(candidate_window_visibility_test PRIVATE 
+    suyan_ui 
+    suyan_core 
+    Qt6::Core 
+    Qt6::Gui 
+    Qt6::Widgets
+)
+set_target_properties(candidate_window_visibility_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+    AUTOMOC ON
+)
+
 # ========== Windows 平台测试 ==========
 
 # 键码转换单元测试
@@ -101,6 +124,10 @@ add_executable(key_converter_test platform/windows/key_converter_test.cpp)
 target_include_directories(key_converter_test PRIVATE 
     ${CMAKE_SOURCE_DIR}/src/platform/windows
 )
+# MSVC 需要 /utf-8 选项来正确处理 UTF-8 源文件
+if(MSVC)
+    target_compile_options(key_converter_test PRIVATE /utf-8)
+endif()
 # 此测试不依赖其他库，使用内置的模拟实现
 
 # 编码转换单元测试
@@ -113,6 +140,10 @@ add_executable(windows_bridge_encoding_test platform/windows/windows_bridge_enco
 target_include_directories(windows_bridge_encoding_test PRIVATE 
     ${CMAKE_SOURCE_DIR}/src/platform/windows
 )
+# MSVC 需要 /utf-8 选项来正确处理 UTF-8 源文件
+if(MSVC)
+    target_compile_options(windows_bridge_encoding_test PRIVATE /utf-8)
+endif()
 # 此测试不依赖其他库，使用内置的编码转换实现
 
 # WindowsBridge 进程名获取单元测试
@@ -125,4 +156,18 @@ add_executable(windows_bridge_process_test platform/windows/windows_bridge_proce
 target_include_directories(windows_bridge_process_test PRIVATE 
     ${CMAKE_SOURCE_DIR}/src/platform/windows
 )
+# MSVC 需要 /utf-8 选项来正确处理 UTF-8 源文件
+if(MSVC)
+    target_compile_options(windows_bridge_process_test PRIVATE /utf-8)
+endif()
 # 此测试不依赖其他库，使用内置的模拟实现
+
+
+# 光标位置获取测试 (Windows only)
+if(WIN32)
+    add_executable(cursor_position_test platform/windows/cursor_position_test.cpp)
+    target_link_libraries(cursor_position_test PRIVATE imm32)
+    if(MSVC)
+        target_compile_options(cursor_position_test PRIVATE /utf-8)
+    endif()
+endif()

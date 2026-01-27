@@ -11,6 +11,10 @@
 
 #ifdef _WIN32
 
+// Qt 头文件必须在 Windows 头文件之前包含
+// 因为 Windows 头文件定义了 Bool 宏，与 Qt 的 qmetatype.h 冲突
+#include <QtCore/qglobal.h>
+
 #include "platform_bridge.h"
 #include "tsf_types.h"
 #include <windows.h>
@@ -128,15 +132,29 @@ private:
     // 获取前台窗口的进程名
     std::string getForegroundProcessName();
 
+    // 获取光标矩形（通过 GetGUIThreadInfo，最可靠）
+    bool getCursorRectFromGUIThread(CaretRect& rect);
+
     // 获取光标矩形（通过 TSF）
     bool getCursorRectFromTSF(CaretRect& rect);
 
     // 获取光标矩形（通过 GetCaretPos 回退）
     bool getCursorRectFromCaret(CaretRect& rect);
+    
+    // 获取光标位置（通过鼠标位置作为最后回退）
+    bool getCursorRectFromMousePos(CaretRect& rect);
 
     TSFBridge* tsfBridge_ = nullptr;
     ITfContext* currentContext_ = nullptr;
     TfEditCookie editCookie_ = TF_INVALID_COOKIE;
+    
+    // 保存最后有效的 composition 位置（用于回退）
+    RECT lastCompositionRect_ = {0, 0, 0, 0};
+    
+public:
+    // 设置最后有效的 composition 位置
+    void setLastCompositionRect(const RECT& rect) { lastCompositionRect_ = rect; }
+    const RECT& getLastCompositionRect() const { return lastCompositionRect_; }
 };
 
 } // namespace suyan

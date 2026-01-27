@@ -22,6 +22,12 @@ set(CORE_HEADERS
     frequency_manager.h
 )
 
+# Windows IPC
+if(WIN32)
+    list(APPEND CORE_SOURCES ipc_channel.cpp)
+    list(APPEND CORE_HEADERS ipc_channel.h)
+endif()
+
 # 创建核心层静态库
 add_library(suyan_core STATIC
     ${CORE_SOURCES}

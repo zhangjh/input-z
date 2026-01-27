@@ -199,15 +199,25 @@ CursorPosition WindowsBridge::getCursorPosition() {
     CursorPosition pos;
     CaretRect rect;
     
-    // 首先尝试通过 TSF 获取光标位置
-    if (getCursorRectFromTSF(rect)) {
+    // 方法1: 使用保存的最后有效 composition 位置
+    if (lastCompositionRect_.left != 0 || lastCompositionRect_.top != 0 ||
+        lastCompositionRect_.right != 0 || lastCompositionRect_.bottom != 0) {
+        pos.x = lastCompositionRect_.left;
+        pos.y = lastCompositionRect_.bottom;
+        pos.height = lastCompositionRect_.bottom - lastCompositionRect_.top;
+        if (pos.height <= 0) pos.height = 20;
+        return pos;
+    }
+    
+    // 方法2: 通过 GetGUIThreadInfo 获取光标位置
+    if (getCursorRectFromGUIThread(rect)) {
         pos.x = rect.x();
         pos.y = rect.y();
         pos.height = rect.height();
         return pos;
     }
     
-    // TSF 获取失败，尝试通过 GetCaretPos 回退
+    // 方法3: 回退到 GetCaretPos
     if (getCursorRectFromCaret(rect)) {
         pos.x = rect.x();
         pos.y = rect.y();
@@ -215,58 +225,85 @@ CursorPosition WindowsBridge::getCursorPosition() {
         return pos;
     }
     
+    // 方法4: 回退到鼠标位置
+    if (getCursorRectFromMousePos(rect)) {
+        pos.x = rect.x();
+        pos.y = rect.y();
+        pos.height = rect.height();
+        return pos;
+    }
+    
     // 所有方法都失败，返回默认位置
-    // Requirements: 5.3 - 处理获取失败时返回默认位置
     pos.x = 0;
     pos.y = 0;
-    pos.height = 20;  // 默认光标高度
+    pos.height = 20;
     return pos;
 }
 
+
 bool WindowsBridge::getCursorRectFromTSF(CaretRect& rect) {
-    if (!currentContext_) {
+    // TSF 方式需要在编辑会话中调用，当前架构不支持
+    return false;
+}
+
+bool WindowsBridge::getCursorRectFromGUIThread(CaretRect& rect) {
+    // 获取前台窗口的线程 ID
+    HWND hwnd = GetForegroundWindow();
+    if (!hwnd) {
         return false;
     }
     
-    // 获取 ITfContextView 接口
-    ITfContextView* contextView = nullptr;
-    HRESULT hr = currentContext_->GetActiveView(&contextView);
-    if (FAILED(hr) || !contextView) {
+    DWORD threadId = GetWindowThreadProcessId(hwnd, nullptr);
+    if (threadId == 0) {
         return false;
     }
     
-    // 获取当前选择范围
-    ITfRange* range = nullptr;
-    TF_SELECTION selection;
-    ULONG fetched = 0;
+    // 使用 GetGUIThreadInfo 获取光标信息
+    GUITHREADINFO gti;
+    gti.cbSize = sizeof(GUITHREADINFO);
     
-    // 需要在编辑会话中获取选择
-    // 这里简化处理，直接尝试获取
-    hr = currentContext_->GetSelection(editCookie_, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
-    if (FAILED(hr) || fetched == 0 || !selection.range) {
-        contextView->Release();
+    if (!GetGUIThreadInfo(threadId, &gti)) {
         return false;
     }
     
-    range = selection.range;
-    
-    // 获取文本范围的屏幕矩形
-    RECT screenRect;
-    BOOL clipped = FALSE;
-    hr = contextView->GetTextExt(editCookie_, range, &screenRect, &clipped);
-    
-    range->Release();
-    contextView->Release();
-    
-    if (FAILED(hr)) {
+    // 检查是否有有效的光标矩形
+    // 注意：某些应用（如 Electron）可能不设置 GUI_CARETBLINKING 标志
+    // 所以我们只检查矩形是否有效
+    if (gti.rcCaret.left == 0 && gti.rcCaret.top == 0 &&
+        gti.rcCaret.right == 0 && gti.rcCaret.bottom == 0) {
+        // 矩形全为 0，检查是否有焦点窗口
+        if (!gti.hwndFocus) {
+            return false;
+        }
+        // 有焦点窗口但没有光标信息，返回失败让其他方法处理
         return false;
     }
     
-    // 转换为 CaretRect
-    rect.left = screenRect.left;
-    rect.top = screenRect.top;
-    rect.right = screenRect.right;
-    rect.bottom = screenRect.bottom;
+    // rcCaret 是相对于 hwndCaret 的客户区坐标
+    HWND caretWnd = gti.hwndCaret;
+    if (!caretWnd) {
+        caretWnd = gti.hwndFocus;
+    }
+    if (!caretWnd) {
+        caretWnd = hwnd;
+    }
+    
+    // 转换为屏幕坐标
+    POINT topLeft = { gti.rcCaret.left, gti.rcCaret.top };
+    POINT bottomRight = { gti.rcCaret.right, gti.rcCaret.bottom };
+    
+    ClientToScreen(caretWnd, &topLeft);
+    ClientToScreen(caretWnd, &bottomRight);
+    
+    rect.left = topLeft.x;
+    rect.top = topLeft.y;
+    rect.right = bottomRight.x;
+    rect.bottom = bottomRight.y;
+    
+    // 确保有合理的高度
+    if (rect.bottom <= rect.top) {
+        rect.bottom = rect.top + 20;
+    }
     
     return true;
 }
@@ -348,6 +385,23 @@ std::string WindowsBridge::getForegroundProcessName() {
     return std::string();
 }
 
+bool WindowsBridge::getCursorRectFromMousePos(CaretRect& rect) {
+    POINT pt;
+    if (!GetCursorPos(&pt)) {
+        return false;
+    }
+    
+    // 使用鼠标位置作为光标位置
+    // 在鼠标位置下方显示候选窗口
+    rect.left = pt.x;
+    rect.top = pt.y;
+    rect.right = pt.x + 2;
+    rect.bottom = pt.y + 20;
+    
+    return true;
+}
+
 } // namespace suyan
 
 #endif // _WIN32
+

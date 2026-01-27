@@ -8,16 +8,78 @@
 
 #ifdef _WIN32
 
+// Qt 头文件必须在任何可能定义 Bool 宏的头文件之前包含
+// rime_api.h 和 Windows 头文件都定义了 Bool 宏，与 Qt 的 qmetatype.h 冲突
+// 因此必须在最开始包含 Qt 头文件
+#include <QtCore/QtCore>
+#include <QPoint>
+
 #include "tsf_bridge.h"
 #include "windows_bridge.h"
+#include "language_bar.h"
 #include "key_converter.h"
 #include "input_engine.h"
 #include "candidate_window.h"
 #include <ctffunc.h>
+#include <QMetaObject>
+#include <QScreen>
+#include <QGuiApplication>
 #include <strsafe.h>
-#include <QPoint>
+#include <imm.h>
+#include <fstream>
+#include <sstream>
+#pragma comment(lib, "imm32.lib")
+
+// 调试日志函数
+// 调试日志函数
+static void DebugLog(const char* format, ...) {
+    char buffer[2048];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    // 1. 输出到调试器 (DebugView) - 适用于所有环境
+    OutputDebugStringA(buffer);
+    OutputDebugStringA("\n");
+    
+    // 2. 输出到文件 (尝试 LocalLow 以兼容沙盒)
+    static std::ofstream logFile;
+    static bool initialized = false;
+    
+    if (!initialized) {
+        // 使用 PID 避免多进程冲突
+        DWORD pid = GetCurrentProcessId();
+        char path[MAX_PATH];
+        
+        // 尝试 LocalLow (Electron/Chrome 沙盒通常允许写入此处)
+        // C:\Users\<User>\AppData\LocalLow\suyan_debug_<PID>.log
+        // 暂时硬编码用户路径以确保测试准确 (User: cn-dantezhang)
+        sprintf_s(path, "C:\\Users\\cn-dantezhang\\AppData\\LocalLow\\suyan_debug_%lu.log", pid);
+        
+        logFile.open(path, std::ios::app);
+        if (!logFile.is_open()) {
+            // 回退到 Temp
+            GetTempPathA(MAX_PATH, path);
+            char filename[64];
+            sprintf_s(filename, "suyan_ime_debug_%lu.log", pid);
+            strcat_s(path, filename);
+            logFile.open(path, std::ios::app);
+        }
+        initialized = true;
+    }
+    
+    if (logFile.is_open()) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        logFile << "[" << st.wHour << ":" << st.wMinute << ":" << st.wSecond << "." << st.wMilliseconds << "] "
+                << buffer << std::endl;
+        logFile.flush();
+    }
+}
 
 namespace suyan {
+
 
 // ============================================
 // 全局变量
@@ -116,6 +178,185 @@ static HRESULT DeleteRegKey(HKEY hKeyRoot, const wchar_t* subKey) {
 }
 
 // ============================================
+// GetTextExtEditSession 实现
+// ============================================
+
+GetTextExtEditSession::GetTextExtEditSession(ITfContext* pContext, ITfComposition* pComposition, TSFBridge* pBridge)
+    : context_(pContext)
+    , composition_(pComposition)
+    , bridge_(pBridge)
+    , textRect_{}
+    , isValid_(false) {
+    if (context_) context_->AddRef();
+    if (composition_) composition_->AddRef();
+}
+
+GetTextExtEditSession::~GetTextExtEditSession() {
+    if (context_) context_->Release();
+    if (composition_) composition_->Release();
+}
+
+STDMETHODIMP GetTextExtEditSession::QueryInterface(REFIID riid, void** ppvObj) {
+    if (!ppvObj) return E_INVALIDARG;
+    *ppvObj = nullptr;
+    if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ITfEditSession)) {
+        *ppvObj = static_cast<ITfEditSession*>(this);
+        AddRef();
+        return S_OK;
+    }
+    return E_NOINTERFACE;
+}
+
+STDMETHODIMP_(ULONG) GetTextExtEditSession::AddRef() {
+    return ++refCount_;
+}
+
+STDMETHODIMP_(ULONG) GetTextExtEditSession::Release() {
+    ULONG count = --refCount_;
+    if (count == 0) delete this;
+    return count;
+}
+
+STDMETHODIMP GetTextExtEditSession::DoEditSession(TfEditCookie ec) {
+    isValid_ = false;
+    
+    if (!context_ || !bridge_) return E_FAIL;
+    
+    ITfContextView* contextView = nullptr;
+    HRESULT hr = context_->GetActiveView(&contextView);
+    if (FAILED(hr) || !contextView) return hr;
+    
+    ITfRange* range = nullptr;
+    
+    // 优先使用 composition 的范围
+    if (composition_) {
+        hr = composition_->GetRange(&range);
+        if (SUCCEEDED(hr) && range) {
+            range->Collapse(ec, TF_ANCHOR_START);
+        }
+    }
+    
+    // 如果没有 composition 或获取失败，尝试获取当前选择
+    if (!range) {
+        TF_SELECTION selection;
+        ULONG fetched = 0;
+        hr = context_->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+        if (SUCCEEDED(hr) && fetched > 0 && selection.range) {
+            range = selection.range;
+        }
+    }
+    
+    if (!range) {
+        contextView->Release();
+        return E_FAIL;
+    }
+    
+    BOOL clipped = FALSE;
+    hr = contextView->GetTextExt(ec, range, &textRect_, &clipped);
+    
+    DebugLog("GetTextExtEditSession::DoEditSession - GetTextExt result: hr=0x%08X, rect=(%d,%d,%d,%d), clipped=%d",
+             hr, textRect_.left, textRect_.top, textRect_.right, textRect_.bottom, clipped);
+    
+    range->Release();
+    contextView->Release();
+    
+    // 验证 GetTextExt 结果
+    bool useTextExt = false;
+    if (SUCCEEDED(hr) && (textRect_.left != 0 || textRect_.top != 0 || 
+                          textRect_.right != 0 || textRect_.bottom != 0)) {
+        // 检查是否在当前前台窗口范围内
+        HWND hwnd = GetForegroundWindow();
+        if (hwnd) {
+            RECT rcWindow;
+            GetWindowRect(hwnd, &rcWindow);
+            
+            // 简单的边界检查：如果 TextExt 完全在窗口外部，可能是不正确的
+            // 注意：多显示器情况下，窗口可能在负坐标，所以要小心判断
+            // 这里主要防范 (0,0) 这种无效坐标，或者明显错误的坐标
+            
+            // Weasel 策略：如果坐标异常，尝试使用 GetCaretPos 进行修正或回退
+            if (textRect_.left >= rcWindow.left && textRect_.right <= rcWindow.right &&
+                textRect_.top >= rcWindow.top && textRect_.bottom <= rcWindow.bottom) {
+                useTextExt = true;
+            } else {
+                // 如果在窗口外，但坐标不是 (0,0)，可能是正常的（比如悬浮窗）
+                // 只有当坐标极度不合理时才舍弃
+                if (abs(textRect_.left) < 10000 && abs(textRect_.top) < 10000) {
+                     useTextExt = true;
+                }
+            }
+        } else {
+            useTextExt = true;
+        }
+    }
+    
+    if (useTextExt) {
+        isValid_ = true;
+        DebugLog("  -> Using GetTextExt position: (%d, %d)", textRect_.left, textRect_.top);
+        bridge_->setCompositionPosition(textRect_);
+        return hr;
+    }
+    
+    // Fallback: 使用 GetCaretPos
+    DebugLog("  -> GetTextExt failed or invalid, trying GetCaretPos");
+    
+    RECT bestRect = textRect_;
+    bool positionFixed = false;
+    
+    POINT caretPt;
+    if (::GetCaretPos(&caretPt)) {
+        HWND focusWnd = GetFocus();
+        if (focusWnd) {
+            ::ClientToScreen(focusWnd, &caretPt);
+            bestRect.left = caretPt.x;
+            bestRect.top = caretPt.y;
+            bestRect.right = caretPt.x + 2;
+            bestRect.bottom = caretPt.y + 20;  // 默认行高
+            positionFixed = true;
+            DebugLog("  -> Using GetCaretPos position: (%d, %d)", bestRect.left, bestRect.top);
+        }
+    }
+    
+    // 如果 GetCaretPos 也失败，尝试 GetGUIThreadInfo
+    if (!positionFixed) {
+        HWND hwnd = GetForegroundWindow();
+        if (hwnd) {
+            DWORD threadId = GetWindowThreadProcessId(hwnd, nullptr);
+            if (threadId != 0) {
+                GUITHREADINFO gti;
+                gti.cbSize = sizeof(GUITHREADINFO);
+                if (GetGUIThreadInfo(threadId, &gti)) {
+                    if (gti.rcCaret.left != 0 || gti.rcCaret.top != 0) {
+                        HWND caretWnd = gti.hwndCaret ? gti.hwndCaret : 
+                                       (gti.hwndFocus ? gti.hwndFocus : hwnd);
+                        POINT topLeft = { gti.rcCaret.left, gti.rcCaret.top };
+                        ClientToScreen(caretWnd, &topLeft);
+                        bestRect.left = topLeft.x;
+                        bestRect.top = topLeft.y;
+                        bestRect.right = topLeft.x + (gti.rcCaret.right - gti.rcCaret.left);
+                        if (bestRect.right <= bestRect.left) bestRect.right = bestRect.left + 2;
+                        bestRect.bottom = topLeft.y + (gti.rcCaret.bottom - gti.rcCaret.top);
+                        if (bestRect.bottom <= bestRect.top) bestRect.bottom = bestRect.top + 20;
+                        
+                        positionFixed = true;
+                        DebugLog("  -> Using GetGUIThreadInfo position: (%d, %d)", bestRect.left, bestRect.top);
+                    }
+                }
+            }
+        }
+    }
+    
+    if (positionFixed) {
+        isValid_ = true;
+        bridge_->setCompositionPosition(bestRect);
+    }
+    
+    return hr;
+}
+
+
+
+// ============================================
 // TSFBridge 实现
 // ============================================
 
@@ -142,6 +383,12 @@ STDMETHODIMP TSFBridge::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfCompositionSink*>(this);
     } else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider)) {
         *ppvObj = static_cast<ITfDisplayAttributeProvider*>(this);
+    } else if (IsEqualIID(riid, IID_ITfTextLayoutSink)) {
+        *ppvObj = static_cast<ITfTextLayoutSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfThreadMgrEventSink)) {
+        *ppvObj = static_cast<ITfThreadMgrEventSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfTextEditSink)) {
+        *ppvObj = static_cast<ITfTextEditSink*>(this);
     } else {
         return E_NOINTERFACE;
     }
@@ -162,23 +409,45 @@ STDMETHODIMP_(ULONG) TSFBridge::Release() {
     return count;
 }
 
+// 前向声明初始化函数
+bool InitializeComponents();
+InputEngine* GetInputEngine();
+CandidateWindow* GetCandidateWindow();
+WindowsBridge* GetWindowsBridge();
+
 // ITfTextInputProcessor
 /**
  * Activate - 激活输入法
  * Task 5.1: 实现 ITfTextInputProcessor
+ * Task 8: 主程序入口 - 组件初始化
  * 
  * 当用户选择此输入法时由 TSF 调用。
  * 职责：
- * 1. 保存 ITfThreadMgr 和 TfClientId
- * 2. 初始化键盘事件接收器
- * 3. 激活 InputEngine
+ * 1. 初始化所有组件（首次激活时）
+ * 2. 保存 ITfThreadMgr 和 TfClientId
+ * 3. 初始化键盘事件接收器
+ * 4. 激活 InputEngine
  * 
- * Requirements: 1.1, 1.5
+ * Requirements: 1.1, 1.5, 12.1, 12.2, 13.1, 13.2, 13.3
  */
 STDMETHODIMP TSFBridge::Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClientId) {
+    DebugLog("TSFBridge::Activate called. ThreadMgr=%p, ClientId=%d", pThreadMgr, tfClientId);
     if (!pThreadMgr) {
+        DebugLog("  -> pThreadMgr is NULL");
         return E_INVALIDARG;
     }
+    
+    // Task 8: 首次激活时初始化所有组件
+    if (!InitializeComponents()) {
+        DebugLog("  -> InitializeComponents failed");
+        return E_FAIL;
+    }
+    DebugLog("  -> InitializeComponents success");
+    
+    // 获取组件引用
+    inputEngine_ = GetInputEngine();
+    candidateWindow_ = GetCandidateWindow();
+    windowsBridge_ = GetWindowsBridge();
     
     // 保存 TSF 对象
     threadMgr_ = pThreadMgr;
@@ -188,11 +457,37 @@ STDMETHODIMP TSFBridge::Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClientId
     // 初始化键盘事件接收器
     HRESULT hr = initKeySink();
     if (FAILED(hr)) {
-        // 清理并返回错误
+        DebugLog("  -> initKeySink failed: 0x%x", hr);
         threadMgr_->Release();
         threadMgr_ = nullptr;
         clientId_ = TF_CLIENTID_NULL;
         return hr;
+    }
+
+    // 初始化 ThreadMgrEventSink (关键修复)
+    if (FAILED(initThreadMgrSink())) {
+        DebugLog("  -> initThreadMgrSink failed");
+        uninitKeySink();
+        threadMgr_->Release();
+        threadMgr_ = nullptr;
+        clientId_ = TF_CLIENTID_NULL;
+        return E_FAIL;
+    }
+
+    // 如果当前已有焦点文档，立即初始化 TextEditSink
+    ITfDocumentMgr* pDocMgrFocus = nullptr;
+    if (SUCCEEDED(threadMgr_->GetFocus(&pDocMgrFocus)) && pDocMgrFocus) {
+        DebugLog("  -> Found existing focus doc, initializing TextEditSink");
+        _InitTextEditSink(pDocMgrFocus);
+        pDocMgrFocus->Release();
+    } else {
+        DebugLog("  -> No existing focus doc");
+    }
+    
+    // 初始化 LanguageBar
+    auto& langBar = LanguageBar::instance();
+    if (!langBar.isInitialized()) {
+        langBar.initialize(threadMgr_);
     }
     
     // 激活 InputEngine
@@ -207,6 +502,7 @@ STDMETHODIMP TSFBridge::Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClientId
     
     activated_ = true;
     
+    DebugLog("TSFBridge::Activate success");
     return S_OK;
 }
 
@@ -231,6 +527,12 @@ STDMETHODIMP TSFBridge::Deactivate() {
         endComposition();
     }
     
+    // 清理 TextEditSink (包含 TextLayoutSink)
+    _InitTextEditSink(nullptr);
+    
+    // 清理 ThreadMgrEventSink
+    uninitThreadMgrSink();
+    
     // 清理键盘事件接收器
     uninitKeySink();
     
@@ -241,7 +543,10 @@ STDMETHODIMP TSFBridge::Deactivate() {
     
     // 隐藏候选词窗口
     if (candidateWindow_) {
-        candidateWindow_->hideWindow();
+        QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+        if (QCoreApplication::instance()) {
+            QCoreApplication::processEvents();
+        }
     }
     
     // 释放 TSF 资源
@@ -266,6 +571,7 @@ STDMETHODIMP TSFBridge::Deactivate() {
  * Requirements: 1.2
  */
 STDMETHODIMP TSFBridge::OnSetFocus(BOOL fForeground) {
+    DebugLog("TSFBridge::OnSetFocus(%d)", fForeground);
     if (fForeground) {
         // 获得焦点
         // 重置 Shift 键状态
@@ -273,9 +579,11 @@ STDMETHODIMP TSFBridge::OnSetFocus(BOOL fForeground) {
         otherKeyPressedWithShift_ = false;
     } else {
         // 失去焦点
-        // 可以选择隐藏候选词窗口
         if (candidateWindow_) {
-            candidateWindow_->hideWindow();
+            QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+            if (QCoreApplication::instance()) {
+                QCoreApplication::processEvents();
+            }
         }
     }
     
@@ -396,7 +704,9 @@ STDMETHODIMP TSFBridge::OnKeyDown(ITfContext* pContext, WPARAM wParam,
     }
     
     // 更新当前上下文
-    currentContext_ = pContext;
+    if (currentContext_ != pContext) {
+        currentContext_ = pContext;
+    }
     if (windowsBridge_) {
         windowsBridge_->setContext(pContext);
     }
@@ -529,7 +839,10 @@ STDMETHODIMP TSFBridge::OnCompositionTerminated(TfEditCookie ecWrite,
         
         // 隐藏候选词窗口
         if (candidateWindow_) {
-            candidateWindow_->hideWindow();
+            QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+            if (QCoreApplication::instance()) {
+                QCoreApplication::processEvents();
+            }
         }
     }
     
@@ -574,6 +887,29 @@ STDMETHODIMP TSFBridge::GetDisplayAttributeInfo(REFGUID guid,
         *ppInfo = nullptr;
     }
     return E_NOTIMPL;
+}
+
+// ITfTextLayoutSink
+/**
+ * OnLayoutChange - 处理文本布局变化
+ * 
+ * 当文本布局发生变化时由 TSF 调用。
+ * 用于更新候选词窗口位置。
+ * 
+ * @param pContext TSF 上下文
+ * @param lcode 布局变化类型
+ * @param pView 上下文视图
+ */
+STDMETHODIMP TSFBridge::OnLayoutChange(ITfContext* pContext, TfLayoutCode lcode, 
+                                        ITfContextView* pView) {
+    (void)pContext;
+    (void)pView;
+    
+    if (lcode == TF_LC_CHANGE || lcode == TF_LC_CREATE) {
+        updateCandidateWindowPosition();
+    }
+    
+    return S_OK;
 }
 
 // 输入组合管理
@@ -644,10 +980,25 @@ HRESULT TSFBridge::startComposition(ITfContext* pContext) {
     
     if (SUCCEEDED(hr) && composition_) {
         currentContext_ = pContext;
+        
+        // CUAS Workaround: 参考 weasel 的实现
+        // 某些应用（CUAS - Cicero Unaware Application Services）不会提供正确的 GetTextExt 位置，
+        // 除非 composition 中已经有字符。因此我们插入一个空格占位符。
+        // 这个占位符会在实际 preedit 更新时被替换。
+        ITfRange* compRange = nullptr;
+        if (SUCCEEDED(composition_->GetRange(&compRange)) && compRange) {
+            TfEditCookie ec = windowsBridge_ ? windowsBridge_->getEditCookie() : TF_INVALID_COOKIE;
+            // 插入空格作为占位符
+            compRange->SetText(ec, TF_ST_CORRECTION, L" ", 1);
+            // 将光标移到开始位置
+            compRange->Collapse(ec, TF_ANCHOR_START);
+            compRange->Release();
+        }
     }
     
     return hr;
 }
+
 
 /**
  * endComposition - 结束当前输入组合
@@ -876,33 +1227,351 @@ HRESULT TSFBridge::uninitKeySink() {
 
 HRESULT TSFBridge::initThreadMgrSink() {
     // Task 5.1: 初始化线程管理器事件接收器
-    // 当前实现不需要监听线程管理器事件
-    // 如果需要监听焦点变化等事件，可以在这里实现
-    return S_OK;
+    ITfSource* source = nullptr;
+    if (FAILED(threadMgr_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source)))) {
+        return E_FAIL;
+    }
+
+    HRESULT hr = source->AdviseSink(IID_ITfThreadMgrEventSink, 
+                                    static_cast<ITfThreadMgrEventSink*>(this), 
+                                    &threadMgrSinkCookie_);
+    source->Release();
+    
+    if (FAILED(hr)) {
+        threadMgrSinkCookie_ = TF_INVALID_COOKIE;
+    }
+    
+    return hr;
 }
 
 HRESULT TSFBridge::uninitThreadMgrSink() {
     // Task 5.1: 清理线程管理器事件接收器
+    if (threadMgrSinkCookie_ == TF_INVALID_COOKIE || !threadMgr_) {
+        return S_OK;
+    }
+
+    ITfSource* source = nullptr;
+    if (SUCCEEDED(threadMgr_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source)))) {
+        source->UnadviseSink(threadMgrSinkCookie_);
+        source->Release();
+    }
+    
+    threadMgrSinkCookie_ = TF_INVALID_COOKIE;
     return S_OK;
 }
 
+BOOL TSFBridge::_InitTextEditSink(ITfDocumentMgr* pDocMgr) {
+    // 清理旧的 Sink
+    if (textEditSinkCookie_ != TF_INVALID_COOKIE || textLayoutSinkCookie_ != TF_INVALID_COOKIE) {
+        if (textEditSinkContext_) {
+            ITfSource* source = nullptr;
+            if (SUCCEEDED(textEditSinkContext_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source)))) {
+                if (textEditSinkCookie_ != TF_INVALID_COOKIE) {
+                    source->UnadviseSink(textEditSinkCookie_);
+                    textEditSinkCookie_ = TF_INVALID_COOKIE;
+                }
+                if (textLayoutSinkCookie_ != TF_INVALID_COOKIE) {
+                    source->UnadviseSink(textLayoutSinkCookie_);
+                    textLayoutSinkCookie_ = TF_INVALID_COOKIE;
+                }
+                source->Release();
+            }
+            textEditSinkContext_->Release();
+            textEditSinkContext_ = nullptr;
+        }
+    }
+
+    if (!pDocMgr) {
+        return TRUE;
+    }
+
+    // 获取顶层上下文
+    if (FAILED(pDocMgr->GetTop(&textEditSinkContext_))) {
+        return FALSE;
+    }
+
+    if (!textEditSinkContext_) {
+        return TRUE;
+    }
+
+    // 注册新的 Sink
+    BOOL fRet = FALSE;
+    ITfSource* source = nullptr;
+    if (SUCCEEDED(textEditSinkContext_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source)))) {
+        // 注册 TextEditSink
+        if (SUCCEEDED(source->AdviseSink(IID_ITfTextEditSink, static_cast<ITfTextEditSink*>(this), &textEditSinkCookie_))) {
+            fRet = TRUE;
+        } else {
+            textEditSinkCookie_ = TF_INVALID_COOKIE;
+        }
+
+        // 注册 TextLayoutSink (同时注册以确保能收到布局变更)
+        if (SUCCEEDED(source->AdviseSink(IID_ITfTextLayoutSink, static_cast<ITfTextLayoutSink*>(this), &textLayoutSinkCookie_))) {
+            fRet = TRUE;
+        } else {
+            textLayoutSinkCookie_ = TF_INVALID_COOKIE;
+        }
+        
+        source->Release();
+    }
+
+    if (!fRet) {
+        if (textEditSinkContext_) {
+            textEditSinkContext_->Release();
+            textEditSinkContext_ = nullptr;
+        }
+    }
+    
+    // 无论是新注册还是清空，都更新 currentContext_ 引用以便 bridge 其他部分使用正确的上下文
+    // 注意：currentContext_ 主要用于 composition，可能需要更仔细的管理，但这里更新它是为了
+    // 确保 TSFBridge 持有最新的焦点文档上下文。
+    // 在 weasel 中，_pContextDocument 和 _pTextEditSinkContext 是分开管理的。
+    // 这里我们先不强制覆盖 currentContext_，因为它通常由 StartComposition 时的上下文决定。
+
+    return fRet;
+}
+
 void TSFBridge::updateCandidateWindowPosition() {
-    // Task 5.2: 更新候选词窗口位置
-    if (!inputEngine_ || !candidateWindow_ || !windowsBridge_) {
+    DebugLog("updateCandidateWindowPosition called");
+    
+    if (!inputEngine_ || !candidateWindow_) {
+        DebugLog("  -> Early return: inputEngine_=%p, candidateWindow_=%p", inputEngine_, candidateWindow_);
         return;
     }
     
     InputState state = inputEngine_->getState();
+    DebugLog("  -> isComposing=%d, candidates=%zu", state.isComposing, state.candidates.size());
     
-    if (state.isComposing && !state.candidates.empty()) {
-        // 获取光标位置并显示候选词窗口
-        CursorPosition cursorPos = windowsBridge_->getCursorPosition();
-        QPoint pos(cursorPos.x, cursorPos.y + cursorPos.height);
-        candidateWindow_->showAt(pos);
-    } else if (!state.isComposing) {
-        candidateWindow_->hideWindow();
+    if (!state.isComposing) {
+        DebugLog("  -> Not composing, hiding window");
+        QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+        if (QCoreApplication::instance()) {
+            QCoreApplication::processEvents();
+        }
+        return;
+    }
+    
+    // 策略改变：不再依赖异步 edit session，而是直接尝试获取位置
+    // 因为在很多应用（如 Electron）中，edit session 可能永远不会完成
+    
+    RECT posRect = {0, 0, 0, 0};
+    bool hasPosition = false;
+    
+    // 方法1: 使用 GetGUIThreadInfo（优先，因为它能获取前台窗口的正确光标位置）
+    // 注意：GetCaretPos 在 TSF 上下文中返回的是输入法窗口的光标，不是目标应用的光标
+    HWND hwnd = GetForegroundWindow();
+    DebugLog("  -> GetForegroundWindow: %p", hwnd);
+    if (hwnd) {
+        DWORD threadId = GetWindowThreadProcessId(hwnd, nullptr);
+        DebugLog("  -> Target thread ID: %lu", threadId);
+        if (threadId != 0) {
+            GUITHREADINFO gti;
+            gti.cbSize = sizeof(GUITHREADINFO);
+            if (GetGUIThreadInfo(threadId, &gti)) {
+                DebugLog("  -> GUITHREADINFO: hwndFocus=%p, hwndCaret=%p, rcCaret=(%d,%d,%d,%d)",
+                         gti.hwndFocus, gti.hwndCaret,
+                         gti.rcCaret.left, gti.rcCaret.top, gti.rcCaret.right, gti.rcCaret.bottom);
+                         
+                if (gti.rcCaret.left != 0 || gti.rcCaret.top != 0 ||
+                    gti.rcCaret.right != 0 || gti.rcCaret.bottom != 0) {
+                    // 使用 hwndCaret 或 hwndFocus 来转换坐标
+                    HWND caretWnd = gti.hwndCaret ? gti.hwndCaret : 
+                                   (gti.hwndFocus ? gti.hwndFocus : hwnd);
+                    
+                    // 调试：获取窗口位置
+                    RECT wndRect;
+                    GetWindowRect(caretWnd, &wndRect);
+                    DebugLog("  -> caretWnd=%p, WindowRect=(%d,%d,%d,%d)", 
+                             caretWnd, wndRect.left, wndRect.top, wndRect.right, wndRect.bottom);
+                    
+                    POINT topLeft = { gti.rcCaret.left, gti.rcCaret.top };
+                    POINT bottomRight = { gti.rcCaret.right, gti.rcCaret.bottom };
+                    DebugLog("  -> Before ClientToScreen: topLeft=(%d,%d)", topLeft.x, topLeft.y);
+                    ClientToScreen(caretWnd, &topLeft);
+                    ClientToScreen(caretWnd, &bottomRight);
+                    DebugLog("  -> After ClientToScreen: topLeft=(%d,%d)", topLeft.x, topLeft.y);
+                    
+                    posRect.left = topLeft.x;
+                    posRect.top = topLeft.y;
+                    posRect.right = bottomRight.x;
+                    posRect.bottom = bottomRight.y;
+                    if (posRect.bottom <= posRect.top) {
+                        posRect.bottom = posRect.top + 20;
+                    }
+                    hasPosition = true;
+                    DebugLog("  -> Position from GUITHREADINFO: (%d, %d) to (%d, %d)",
+                             posRect.left, posRect.top, posRect.right, posRect.bottom);
+                }
+
+            } else {
+                DebugLog("  -> GetGUIThreadInfo failed");
+            }
+        }
+    }
+    
+    // 方法2: 如果 GetGUIThreadInfo 失败，尝试使用 GetCaretPos（可能不准确）
+    if (!hasPosition) {
+        POINT caretPt;
+        if (::GetCaretPos(&caretPt)) {
+            HWND focusWnd = GetFocus();
+            DebugLog("  -> GetCaretPos fallback: (%d, %d), focusWnd=%p", caretPt.x, caretPt.y, focusWnd);
+            if (focusWnd) {
+                ::ClientToScreen(focusWnd, &caretPt);
+                posRect.left = caretPt.x;
+                posRect.top = caretPt.y;
+                posRect.right = caretPt.x + 2;
+                posRect.bottom = caretPt.y + 20;
+                hasPosition = true;
+                DebugLog("  -> Position from GetCaretPos: (%d, %d)", posRect.left, posRect.top);
+            }
+        } else {
+            DebugLog("  -> GetCaretPos failed");
+        }
+    }
+
+    
+    // 方法3: 使用鼠标位置作为最后回退
+    if (!hasPosition) {
+        POINT pt;
+        if (GetCursorPos(&pt)) {
+            posRect.left = pt.x;
+            posRect.top = pt.y + 20;
+            posRect.right = pt.x + 2;
+            posRect.bottom = pt.y + 40;
+            hasPosition = true;
+            DebugLog("  -> Position from mouse: (%d, %d)", posRect.left, posRect.top);
+        }
+    }
+    
+    // 显示候选窗口
+    if (hasPosition) {
+        DebugLog("  -> Calling setCompositionPosition with (%d, %d, %d, %d)", 
+                 posRect.left, posRect.top, posRect.right, posRect.bottom);
+        setCompositionPosition(posRect);
+    } else {
+        DebugLog("  -> No position found, not showing window");
+    }
+    
+    // 同时也尝试通过 edit session 获取更精确的位置（如果应用支持的话）
+    if (currentContext_) {
+        auto* editSession = new GetTextExtEditSession(currentContext_, composition_, this);
+        HRESULT hrSession = S_OK;
+        currentContext_->RequestEditSession(
+            clientId_,
+            editSession,
+            TF_ES_ASYNCDONTCARE | TF_ES_READ,
+            &hrSession
+        );
+        editSession->Release();
     }
 }
+
+
+
+
+void TSFBridge::setCompositionPosition(const RECT& rc) {
+    if (!candidateWindow_ || !inputEngine_) {
+        return;
+    }
+    
+    InputState state = inputEngine_->getState();
+    if (!state.isComposing) {
+        return;
+    }
+    
+    RECT validRect = rc;
+    
+    // 如果位置无效（全为0或负数），尝试使用回退方法
+    if (validRect.left <= 0 && validRect.top <= 0 && 
+        validRect.right <= 0 && validRect.bottom <= 0) {
+        
+        // 回退方法1: 使用 GetGUIThreadInfo
+        HWND hwnd = GetForegroundWindow();
+        if (hwnd) {
+            DWORD threadId = GetWindowThreadProcessId(hwnd, nullptr);
+            if (threadId != 0) {
+                GUITHREADINFO gti;
+                gti.cbSize = sizeof(GUITHREADINFO);
+                if (GetGUIThreadInfo(threadId, &gti)) {
+                    if (gti.rcCaret.left != 0 || gti.rcCaret.top != 0 ||
+                        gti.rcCaret.right != 0 || gti.rcCaret.bottom != 0) {
+                        HWND caretWnd = gti.hwndCaret ? gti.hwndCaret : 
+                                       (gti.hwndFocus ? gti.hwndFocus : hwnd);
+                        POINT topLeft = { gti.rcCaret.left, gti.rcCaret.bottom };
+                        ClientToScreen(caretWnd, &topLeft);
+                        validRect.left = topLeft.x;
+                        validRect.top = topLeft.y;
+                        validRect.right = topLeft.x + 2;
+                        validRect.bottom = topLeft.y + (gti.rcCaret.bottom - gti.rcCaret.top);
+                        if (validRect.bottom <= validRect.top) {
+                            validRect.bottom = validRect.top + 20;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 回退方法2: 使用 GetCaretPos
+        if (validRect.left <= 0 && validRect.top <= 0) {
+            POINT caretPos;
+            if (GetCaretPos(&caretPos)) {
+                HWND hwndFocus = GetFocus();
+                if (hwndFocus) {
+                    ClientToScreen(hwndFocus, &caretPos);
+                    validRect.left = caretPos.x;
+                    validRect.top = caretPos.y;
+                    validRect.right = caretPos.x + 2;
+                    validRect.bottom = caretPos.y + 20;
+                }
+            }
+        }
+        
+        // 回退方法3: 使用鼠标位置
+        if (validRect.left <= 0 && validRect.top <= 0) {
+            POINT pt;
+            if (GetCursorPos(&pt)) {
+                validRect.left = pt.x;
+                validRect.top = pt.y + 20;  // 在鼠标下方
+                validRect.right = pt.x + 2;
+                validRect.bottom = pt.y + 40;
+            }
+        }
+    }
+    
+    // 如果仍然无效，不显示窗口
+    if (validRect.left <= 0 && validRect.top <= 0) {
+        DebugLog("setCompositionPosition: invalid position, not showing");
+        return;
+    }
+    
+    // Task 6: DPI 缩放修正 (Native Direct Strategy)
+    // TSF/Windows API 返回的是物理坐标 (Physical Coordinates)
+    // 我们直接使用 SetWindowPos (通过 showAtNative) 设置物理坐标
+    // 这样彻底绕过了 Qt 的 DPI 映射和屏幕枚举问题
+    // 完美解决 多显示器 + Chrome/Electron 沙盒 + 混合 DPI 问题
+    
+    // 构造物理坐标矩形 (Physical Rect)
+    QRect physicalRect(validRect.left, validRect.top, 
+                       validRect.right - validRect.left, 
+                       validRect.bottom - validRect.top);
+    
+    DebugLog("setCompositionPosition: Native Force Rect (%d,%d %dx%d)", 
+             physicalRect.x(), physicalRect.y(), physicalRect.width(), physicalRect.height());
+    
+    QMetaObject::invokeMethod(candidateWindow_, [this, physicalRect]() {
+        if (candidateWindow_) {
+            DebugLog("  -> invokeMethod calling showAtNative");
+            candidateWindow_->showAtNative(physicalRect);
+        }
+    }, Qt::QueuedConnection);
+    
+    // 手动处理 Qt 事件队列（DLL 中没有事件循环）
+    if (QCoreApplication::instance()) {
+        QCoreApplication::processEvents();
+    }
+}
+
+
 
 /**
  * handleShiftKeyRelease - 处理 Shift 键释放切换模式
@@ -925,13 +1594,94 @@ void TSFBridge::handleShiftKeyRelease() {
         }
         // 重置输入状态
         inputEngine_->reset();
+        // 隐藏候选词窗口
         if (candidateWindow_) {
-            candidateWindow_->hideWindow();
+            QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+            if (QCoreApplication::instance()) {
+                QCoreApplication::processEvents();
+            }
         }
     }
     
     // 切换模式
     inputEngine_->toggleMode();
+}
+
+// ============================================
+// ITfThreadMgrEventSink 实现
+// ============================================
+
+STDMETHODIMP TSFBridge::OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) {
+    return S_OK;
+}
+
+STDMETHODIMP TSFBridge::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
+    return S_OK;
+}
+
+STDMETHODIMP TSFBridge::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
+    // 关键：当文档焦点变化时，切换 TextEditSink 监听目标
+    _InitTextEditSink(pDocMgrFocus);
+    
+    // 如果失去了焦点，隐藏候选窗口
+    if (!pDocMgrFocus && candidateWindow_) {
+        QMetaObject::invokeMethod(candidateWindow_, "hideWindow", Qt::QueuedConnection);
+        if (QCoreApplication::instance()) {
+            QCoreApplication::processEvents();
+        }
+    }
+    
+    return S_OK;
+}
+
+STDMETHODIMP TSFBridge::OnPushContext(ITfContext* pContext) {
+    return S_OK;
+}
+
+STDMETHODIMP TSFBridge::OnPopContext(ITfContext* pContext) {
+    return S_OK;
+}
+
+// ============================================
+// ITfTextEditSink 实现
+// ============================================
+
+// 辅助函数：判断 rangeCover 是否覆盖 rangeTest (用于检测光标是否移出 composition)
+static BOOL IsRangeCovered(TfEditCookie ec, ITfRange* pRangeTest, ITfRange* pRangeCover) {
+    LONG lResult;
+    if (pRangeCover->CompareStart(ec, pRangeTest, TF_ANCHOR_START, &lResult) != S_OK || lResult > 0)
+        return FALSE;
+    if (pRangeCover->CompareEnd(ec, pRangeTest, TF_ANCHOR_END, &lResult) != S_OK || lResult < 0)
+        return FALSE;
+    return TRUE;
+}
+
+STDMETHODIMP TSFBridge::OnEndEdit(ITfContext* pContext, TfEditCookie ecReadOnly, ITfEditRecord* pEditRecord) {
+    // 检查选择（光标）变化
+    BOOL fSelectionChanged;
+    if (SUCCEEDED(pEditRecord->GetSelectionStatus(&fSelectionChanged)) && fSelectionChanged) {
+        if (isComposing() && composition_) {
+            // 获取当前选择
+            TF_SELECTION tfSelection;
+            ULONG cFetched;
+            if (SUCCEEDED(pContext->GetSelection(ecReadOnly, TF_DEFAULT_SELECTION, 1, &tfSelection, &cFetched)) && cFetched == 1) {
+                // 获取 composition 范围
+                ITfRange* pRangeComposition = nullptr;
+                if (SUCCEEDED(composition_->GetRange(&pRangeComposition)) && pRangeComposition) {
+                    // 如果光标移出了 composition 范围，结束 composition
+                    if (!IsRangeCovered(ecReadOnly, tfSelection.range, pRangeComposition)) {
+                        DebugLog("Cursor moved out of composition range, ending composition");
+                        endComposition();
+                    }
+                    pRangeComposition->Release();
+                }
+                if (tfSelection.range) {
+                    tfSelection.range->Release();
+                }
+            }
+        }
+    }
+    return S_OK;
 }
 
 // ============================================

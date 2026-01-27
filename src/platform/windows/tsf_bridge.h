@@ -10,6 +10,10 @@
 
 #ifdef _WIN32
 
+// Qt 头文件必须在 Windows 头文件之前包含
+// 因为 Windows 头文件定义了 Bool 宏，与 Qt 的 qmetatype.h 冲突
+#include <QtCore/qglobal.h>
+
 #include <windows.h>
 #include <msctf.h>
 #include <atomic>
@@ -21,6 +25,7 @@ namespace suyan {
 class InputEngine;
 class CandidateWindow;
 class WindowsBridge;
+class TSFBridge;
 
 // ============================================
 // CLSID 和 GUID 声明
@@ -38,6 +43,36 @@ extern const GUID GUID_SuYanProfile;
 constexpr LANGID SUYAN_LANGID = MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED);
 
 // ============================================
+// GetTextExtEditSession - 用于获取光标位置的编辑会话
+// ============================================
+
+class GetTextExtEditSession : public ITfEditSession {
+public:
+    GetTextExtEditSession(ITfContext* pContext, ITfComposition* pComposition, TSFBridge* pBridge);
+    virtual ~GetTextExtEditSession();
+
+    // IUnknown
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;
+    STDMETHODIMP_(ULONG) AddRef() override;
+    STDMETHODIMP_(ULONG) Release() override;
+
+    // ITfEditSession
+    STDMETHODIMP DoEditSession(TfEditCookie ec) override;
+
+    // 获取结果
+    RECT getTextRect() const { return textRect_; }
+    bool isValid() const { return isValid_; }
+
+private:
+    std::atomic<ULONG> refCount_{1};
+    ITfContext* context_;
+    ITfComposition* composition_;
+    TSFBridge* bridge_;
+    RECT textRect_;
+    bool isValid_;
+};
+
+// ============================================
 // TSFBridge 类
 // ============================================
 
@@ -50,11 +85,15 @@ constexpr LANGID SUYAN_LANGID = MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIF
  * - ITfKeyEventSink: 键盘事件接收器
  * - ITfCompositionSink: 输入组合接收器
  * - ITfDisplayAttributeProvider: 显示属性提供器
+ * - ITfTextLayoutSink: 文本布局变化通知
  */
 class TSFBridge : public ITfTextInputProcessor,
                   public ITfKeyEventSink,
                   public ITfCompositionSink,
-                  public ITfDisplayAttributeProvider {
+                  public ITfDisplayAttributeProvider,
+                  public ITfTextLayoutSink,
+                  public ITfThreadMgrEventSink,
+                  public ITfTextEditSink {
 public:
     TSFBridge();
     virtual ~TSFBridge();
@@ -90,6 +129,21 @@ public:
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID guid, 
                                          ITfDisplayAttributeInfo** ppInfo) override;
 
+    // ========== ITfTextLayoutSink ==========
+    STDMETHODIMP OnLayoutChange(ITfContext* pContext, TfLayoutCode lcode, 
+                                ITfContextView* pView) override;
+
+    // ========== ITfThreadMgrEventSink ==========
+    STDMETHODIMP OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) override;
+    STDMETHODIMP OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) override;
+    STDMETHODIMP OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) override;
+    STDMETHODIMP OnPushContext(ITfContext* pContext) override;
+    STDMETHODIMP OnPopContext(ITfContext* pContext) override;
+
+    // ========== ITfTextEditSink ==========
+    STDMETHODIMP OnEndEdit(ITfContext* pContext, TfEditCookie ecReadOnly, 
+                           ITfEditRecord* pEditRecord) override;
+
     // ========== 组件访问 ==========
     void setInputEngine(InputEngine* engine) { inputEngine_ = engine; }
     void setCandidateWindow(CandidateWindow* window) { candidateWindow_ = window; }
@@ -113,6 +167,9 @@ public:
     HRESULT commitText(const std::wstring& text);
     HRESULT updatePreedit(const std::wstring& preedit, int caretPos);
     HRESULT clearPreedit();
+    
+    // ========== 候选窗口位置 ==========
+    void setCompositionPosition(const RECT& rc);
 
     // ========== 激活状态 ==========
     bool isActivated() const { return activated_; }
@@ -127,7 +184,10 @@ private:
     HRESULT uninitKeySink();
     HRESULT initThreadMgrSink();
     HRESULT uninitThreadMgrSink();
-
+    
+    // 文本编辑 Sink 初始化 (替代原有的 initTextLayoutSink)
+    BOOL _InitTextEditSink(ITfDocumentMgr* pDocMgr);
+    
     // 更新候选词窗口位置
     void updateCandidateWindowPosition();
 
@@ -146,6 +206,10 @@ private:
     DWORD threadMgrSinkCookie_ = TF_INVALID_COOKIE;
     DWORD textEditSinkCookie_ = TF_INVALID_COOKIE;
     DWORD keySinkCookie_ = TF_INVALID_COOKIE;
+    DWORD textLayoutSinkCookie_ = TF_INVALID_COOKIE;
+    
+    // 当前监听的文档上下文 (用于 TextEditSink)
+    ITfContext* textEditSinkContext_ = nullptr;
 
     // 激活状态
     bool activated_ = false;
@@ -212,6 +276,49 @@ void DllAddRef();
  * 减少 DLL 引用计数
  */
 void DllRelease();
+
+// ============================================
+// 组件初始化和访问（Task 8）
+// ============================================
+
+/**
+ * 初始化所有组件
+ * 在 TSFBridge::Activate 首次调用时执行
+ * Requirements: 12.1, 12.2, 13.1, 13.2, 13.3
+ */
+bool InitializeComponents();
+
+/**
+ * 清理所有组件
+ * Requirements: 12.3
+ */
+void CleanupComponents();
+
+/**
+ * 显示错误对话框
+ * Requirements: 13.4
+ */
+void ShowErrorDialog(const wchar_t* title, const wchar_t* message);
+
+/**
+ * 获取 InputEngine 实例
+ */
+InputEngine* GetInputEngine();
+
+/**
+ * 获取 CandidateWindow 实例
+ */
+CandidateWindow* GetCandidateWindow();
+
+/**
+ * 获取 WindowsBridge 实例
+ */
+WindowsBridge* GetWindowsBridge();
+
+/**
+ * 检查是否已初始化
+ */
+bool IsInitialized();
 
 } // namespace suyan
 

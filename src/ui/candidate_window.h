@@ -15,6 +15,11 @@
 #include "theme_manager.h"
 #include "layout_manager.h"
 
+#include <QResizeEvent>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace suyan {
 
 // 前向声明
@@ -55,10 +60,21 @@ public:
 
     /**
      * 在指定位置显示窗口
-     *
      * @param cursorPos 光标位置（屏幕坐标）
      */
     void showAt(const QPoint& cursorPos);
+
+    /**
+     * 在指定位置显示窗口 (Native Coordinates/Boundary Aware)
+     * 
+     * 直接使用 Windows API SetWindowPos 设置位置，绕过 Qt 的 DPI 映射。
+     * 自动处理屏幕边界溢出：
+     * - 如果右侧空间不足，向左对齐
+     * - 如果下方空间不足，显示在上方
+     * 
+     * @param cursorRect 光标矩形 (Physical/Screen Coordinates)
+     */
+    void showAtNative(const QRect& cursorRect);
 
     /**
      * 隐藏窗口
@@ -195,7 +211,10 @@ private:
     // 设置 macOS 特定的窗口级别
     void setupMacOSWindowLevel();
     
-    // 确保窗口在全屏应用中可见（macOS）
+    // 设置 Windows 特定的窗口级别
+    void setupWindowsWindowLevel();
+    
+    // 确保窗口在全屏应用中可见
     void ensureVisibleInFullScreen();
 
     // 计算窗口位置（处理屏幕边缘）
@@ -203,11 +222,14 @@ private:
 
     // 获取光标所在的屏幕
     QScreen* getScreenAtCursor(const QPoint& cursorPos);
+    
+    // Native implementation
+    void showAtNativeImpl(const QPoint& pos);
 
     // 成员变量
     CandidateView* candidateView_ = nullptr;
     QPoint lastCursorPos_;
-    QPoint cursorOffset_{0, 20};  // 默认在光标下方 20 像素
+    QPoint cursorOffset_{0, 0};  // 默认偏移为0 (由 TSFBridge 控制实际位置)
     bool positionInitialized_ = false;
 
     // 信号连接

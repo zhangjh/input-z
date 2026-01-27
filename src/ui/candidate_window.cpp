@@ -34,9 +34,11 @@ CandidateWindow::CandidateWindow(QWidget* parent)
     connect(candidateView_, &CandidateView::candidateClicked,
             this, &CandidateWindow::candidateClicked);
     
-    // 设置 macOS 特定的窗口级别
+    // 设置平台特定的窗口级别
 #ifdef Q_OS_MACOS
     setupMacOSWindowLevel();
+#elif defined(Q_OS_WIN)
+    setupWindowsWindowLevel();
 #endif
     
     // 连接 ThemeManager 和 LayoutManager
@@ -87,13 +89,25 @@ void CandidateWindow::updateCandidates(const InputState& state) {
     // 更新候选词视图
     candidateView_->updateFromState(state);
     
-    // 调整窗口大小
-    QSize newSize = candidateView_->sizeHint();
-    resize(newSize);
+    // 如果不在输入状态，隐藏窗口
+    if (!state.isComposing) {
+        hideWindow();
+        return;
+    }
     
-    // 如果有候选词且窗口已定位，更新位置
-    if (!state.candidates.empty() && positionInitialized_) {
-        updatePosition();
+    // 如果有 preedit 或候选词，显示窗口
+    if (!state.preedit.empty() || !state.candidates.empty()) {
+        // 调整窗口大小
+        QSize newSize = candidateView_->sizeHint();
+        resize(newSize);
+        
+        // 如果窗口已定位，更新位置
+        if (positionInitialized_) {
+            updatePosition();
+        }
+    } else {
+        // 没有 preedit 也没有候选词，隐藏窗口
+        hideWindow();
     }
 }
 
@@ -106,6 +120,7 @@ void CandidateWindow::clearCandidates() {
 // ========== 窗口显示控制 ==========
 
 void CandidateWindow::showAt(const QPoint& cursorPos) {
+#ifndef Q_OS_WIN
     lastCursorPos_ = cursorPos;
     positionInitialized_ = true;
     
@@ -122,8 +137,14 @@ void CandidateWindow::showAt(const QPoint& cursorPos) {
     }
     
     // 确保在全屏应用中可见
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS)
     ensureVisibleInFullScreen();
+#endif
+
+#else
+    // Windows implementation is handled by showAtNative()
+    // This is kept as stub to satisfy linker/interface
+    Q_UNUSED(cursorPos);
 #endif
 }
 
@@ -189,6 +210,58 @@ void CandidateWindow::updatePosition() {
     QSize windowSize = size();
     QPoint windowPos = calculateWindowPosition(lastCursorPos_, windowSize);
     move(windowPos);
+}
+
+
+
+void CandidateWindow::showAtNative(const QRect& cursorRect) {
+#ifdef _WIN32
+    if (!isVisible()) {
+        QWidget::setVisible(true);
+    }
+    adjustSize();
+    
+    HWND hwnd = (HWND)winId();
+    if (hwnd) {
+        RECT winRect;
+        GetWindowRect(hwnd, &winRect);
+        int w = winRect.right - winRect.left;
+        int h = winRect.bottom - winRect.top;
+        
+        POINT targetPt = { cursorRect.left(), cursorRect.bottom() };
+        HMONITOR hMon = MonitorFromPoint(targetPt, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi;
+        mi.cbSize = sizeof(MONITORINFO);
+        GetMonitorInfoW(hMon, &mi);
+        
+        int x = cursorRect.left();
+        int y = cursorRect.bottom() + 2;
+        
+        if (x + w > mi.rcWork.right) {
+            x = mi.rcWork.right - w;
+            if (x < mi.rcWork.left) {
+                x = mi.rcWork.left;
+            }
+        }
+        
+        if (y + h > mi.rcWork.bottom) {
+            int topY = cursorRect.top() - h - 5;
+            if (topY >= mi.rcWork.top) {
+                y = topY;
+            } else {
+                y = mi.rcWork.bottom - h;
+            }
+        }
+        
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, 
+                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        
+        lastCursorPos_ = QPoint(x, y);
+        positionInitialized_ = true;
+    }
+#else
+    showAt(cursorRect.bottomLeft());
+#endif
 }
 
 QPoint CandidateWindow::calculateWindowPosition(const QPoint& cursorPos, 
@@ -261,14 +334,21 @@ void CandidateWindow::resizeEvent(QResizeEvent* event) {
     }
 }
 
-// 非 macOS 平台的空实现
-#ifndef Q_OS_MACOS
+// 非 macOS/Windows 平台的空实现
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN)
 void CandidateWindow::setupMacOSWindowLevel() {
-    // 非 macOS 平台不需要特殊处理
+}
+
+void CandidateWindow::setupWindowsWindowLevel() {
 }
 
 void CandidateWindow::ensureVisibleInFullScreen() {
-    // 非 macOS 平台不需要特殊处理
+}
+#elif defined(Q_OS_WIN)
+void CandidateWindow::setupMacOSWindowLevel() {
+}
+#elif defined(Q_OS_MACOS)
+void CandidateWindow::setupWindowsWindowLevel() {
 }
 #endif
 

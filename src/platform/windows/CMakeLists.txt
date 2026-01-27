@@ -1,5 +1,4 @@
 # SuYan Windows Platform Layer - CMake 配置
-# Task 1.1: Windows 平台目录结构和构建配置
 
 # 仅在 Windows 上编译
 if(NOT WIN32)
@@ -52,11 +51,7 @@ set(RIME_DATA_DIR "${CMAKE_SOURCE_DIR}/data/rime")
 # 主题资源
 set(THEME_DIR "${CMAKE_SOURCE_DIR}/resources/themes")
 
-# librime Windows 库文件
-set(LIBRIME_WINDOWS_DIR "${CMAKE_SOURCE_DIR}/deps/librime-windows")
-set(LIBRIME_WINDOWS_INCLUDE "${LIBRIME_WINDOWS_DIR}/include")
-set(LIBRIME_WINDOWS_LIB "${LIBRIME_WINDOWS_DIR}/lib")
-set(LIBRIME_WINDOWS_BIN "${LIBRIME_WINDOWS_DIR}/bin")
+# librime 路径（从根CMakeLists.txt继承 LIBRIME_INCLUDE_DIR 和 LIBRIME_LIB_DIR）
 
 # ============================================
 # 源文件
@@ -67,14 +62,14 @@ set(WINDOWS_SOURCES
     tsf_bridge.cpp          # TSF 桥接实现
     windows_bridge.cpp      # WindowsBridge 实现
     key_converter.cpp       # 键码转换
-    tray_manager.cpp        # 系统托盘管理
+    language_bar.cpp        # TSF 语言栏实现
 )
 
 set(WINDOWS_HEADERS
     tsf_bridge.h            # TSF 桥接头文件
     windows_bridge.h        # WindowsBridge 头文件
     key_converter.h         # 键码转换头文件
-    tray_manager.h          # 系统托盘管理头文件
+    language_bar.h          # TSF 语言栏头文件
     tsf_types.h             # TSF 类型定义
     registry_config.h       # 注册表配置
 )
@@ -113,7 +108,7 @@ target_include_directories(suyan_windows_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/ui
-    ${LIBRIME_WINDOWS_INCLUDE}
+    ${LIBRIME_INCLUDE_DIR}
 )
 
 # 链接依赖
@@ -138,8 +133,15 @@ add_library(SuYanTSF SHARED
 )
 
 # DLL 属性配置
+# 32位和64位使用不同的输出名称
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(SUYAN_DLL_NAME "SuYan")
+else()
+    set(SUYAN_DLL_NAME "SuYan32")
+endif()
+
 set_target_properties(SuYanTSF PROPERTIES
-    OUTPUT_NAME "SuYan"
+    OUTPUT_NAME "${SUYAN_DLL_NAME}"
     PREFIX ""
     SUFFIX ".dll"
     
@@ -159,7 +161,7 @@ target_include_directories(SuYanTSF PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/ui
-    ${LIBRIME_WINDOWS_INCLUDE}
+    ${LIBRIME_INCLUDE_DIR}
 )
 
 # 链接依赖
@@ -210,9 +212,9 @@ add_custom_command(TARGET SuYanTSF POST_BUILD
 # 复制 librime DLL 到输出目录
 add_custom_command(TARGET SuYanTSF POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${LIBRIME_WINDOWS_BIN}/rime.dll"
+        "${LIBRIME_LIB_DIR}/rime.dll"
         "$<TARGET_FILE_DIR:SuYanTSF>/"
-    COMMENT "Copying librime DLL..."
+    COMMENT "Copying librime DLL (${SUYAN_ARCH})..."
 )
 
 # ============================================
@@ -266,7 +268,7 @@ install(DIRECTORY "${THEME_DIR}/"
 )
 
 # 安装 librime DLL
-install(FILES "${LIBRIME_WINDOWS_BIN}/rime.dll"
+install(FILES "${LIBRIME_LIB_DIR}/rime.dll"
     DESTINATION "."
     COMPONENT Runtime
 )
@@ -275,36 +277,76 @@ install(FILES "${LIBRIME_WINDOWS_BIN}/rime.dll"
 # 注册/注销脚本
 # ============================================
 
-# 创建注册脚本
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/register.bat"
+# 创建注册脚本（同时注册64位和32位DLL）
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/register_admin.bat"
     "@echo off\n"
-    "echo Registering SuYan Input Method...\n"
-    "regsvr32 /s \"%~dp0SuYan.dll\"\n"
-    "if %errorlevel% equ 0 (\n"
-    "    echo Registration successful!\n"
-    ") else (\n"
-    "    echo Registration failed! Please run as Administrator.\n"
+    "echo ========================================\n"
+    "echo SuYan Input Method Registration\n"
+    "echo ========================================\n"
+    "echo.\n"
+    "net session >nul 2>&1\n"
+    "if %errorlevel% neq 0 (\n"
+    "    echo ERROR: Please run this script as Administrator!\n"
+    "    pause\n"
+    "    exit /b 1\n"
     ")\n"
+    "echo Registering 64-bit SuYan.dll...\n"
+    "regsvr32 /s \"%~dp0SuYan.dll\"\n"
+    "if %errorlevel% equ 0 ( echo   64-bit: OK ) else ( echo   64-bit: FAILED )\n"
+    "if exist \"%~dp0SuYan32.dll\" (\n"
+    "    echo Registering 32-bit SuYan32.dll...\n"
+    "    regsvr32 /s \"%~dp0SuYan32.dll\"\n"
+    "    if %errorlevel% equ 0 ( echo   32-bit: OK ) else ( echo   32-bit: FAILED )\n"
+    ")\n"
+    "echo.\n"
+    "echo Registration complete.\n"
+    "echo Add SuYan in: Settings ^> Time ^& Language ^> Language ^> Options ^> Add keyboard\n"
+    "echo.\n"
     "pause\n"
 )
 
 # 创建注销脚本
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/unregister.bat"
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/unregister_admin.bat"
     "@echo off\n"
-    "echo Unregistering SuYan Input Method...\n"
-    "regsvr32 /u /s \"%~dp0SuYan.dll\"\n"
-    "if %errorlevel% equ 0 (\n"
-    "    echo Unregistration successful!\n"
-    ") else (\n"
-    "    echo Unregistration failed! Please run as Administrator.\n"
+    "echo ========================================\n"
+    "echo SuYan Input Method Unregistration\n"
+    "echo ========================================\n"
+    "echo.\n"
+    "net session >nul 2>&1\n"
+    "if %errorlevel% neq 0 (\n"
+    "    echo ERROR: Please run this script as Administrator!\n"
+    "    pause\n"
+    "    exit /b 1\n"
     ")\n"
+    "if exist \"%~dp0SuYan32.dll\" (\n"
+    "    echo Unregistering 32-bit SuYan32.dll...\n"
+    "    regsvr32 /u /s \"%~dp0SuYan32.dll\"\n"
+    "    if %errorlevel% equ 0 ( echo   32-bit: OK ) else ( echo   32-bit: FAILED )\n"
+    ")\n"
+    "echo Unregistering 64-bit SuYan.dll...\n"
+    "regsvr32 /u /s \"%~dp0SuYan.dll\"\n"
+    "if %errorlevel% equ 0 ( echo   64-bit: OK ) else ( echo   64-bit: FAILED )\n"
+    "echo.\n"
+    "echo Unregistration complete.\n"
+    "echo.\n"
     "pause\n"
+)
+
+# 复制注册脚本到输出目录
+add_custom_command(TARGET SuYanTSF POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/register_admin.bat"
+        "$<TARGET_FILE_DIR:SuYanTSF>/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/unregister_admin.bat"
+        "$<TARGET_FILE_DIR:SuYanTSF>/"
+    COMMENT "Copying registration scripts..."
 )
 
 # 安装注册脚本
 install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/register.bat"
-    "${CMAKE_CURRENT_BINARY_DIR}/unregister.bat"
+    "${CMAKE_CURRENT_BINARY_DIR}/register_admin.bat"
+    "${CMAKE_CURRENT_BINARY_DIR}/unregister_admin.bat"
     DESTINATION "."
     COMPONENT Runtime
 )
@@ -319,7 +361,7 @@ message(STATUS "  Windows SDK: ${CMAKE_SYSTEM_VERSION}")
 message(STATUS "  Icon: ${WINDOWS_ICON_FILE}")
 message(STATUS "  RIME data: ${RIME_DATA_DIR}")
 message(STATUS "  Themes: ${THEME_DIR}")
-message(STATUS "  librime (Windows): ${LIBRIME_WINDOWS_DIR}")
+message(STATUS "  librime: ${LIBRIME_LIB_DIR}")
 message(STATUS "  windeployqt: ${WINDEPLOYQT_EXECUTABLE}")
 message(STATUS "")
 message(STATUS "Build targets:")

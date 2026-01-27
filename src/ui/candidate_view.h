@@ -235,7 +235,7 @@ private:
 
     // 显示选项
     bool showComment_ = false;   // 默认不显示候选词注释（拼音）
-    bool showPreedit_ = false;   // 默认不显示 preedit（已在应用内显示）
+    bool showPreedit_ = true;    // 默认显示 preedit（Windows TSF 需要在候选框中显示）
 
     // 多行展开模式
     bool isExpanded_ = false;    // 是否展开多行

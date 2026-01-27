@@ -3,9 +3,7 @@
 ## 版本信息
 
 - 版本: 1.16.1
-- 下载日期: 2026-01-22
 - 来源: https://github.com/rime/librime/releases/tag/1.16.1
-- 文件: rime-de4700e-macOS-universal.tar.bz2
 
 ## 目录结构
 
@@ -16,24 +14,24 @@ deps/librime/
 │   ├── rime_api_deprecated.h
 │   ├── rime_api_stdbool.h
 │   └── rime_levers_api.h
-├── lib/              # 库文件
-│   ├── librime.dylib
-│   ├── librime.1.dylib
-│   └── librime.1.16.1.dylib
+├── lib/
+│   ├── x64/          # 64位库
+│   │   ├── rime.dll
+│   │   └── rime.lib
+│   └── x86/          # 32位库
+│       ├── rime.dll
+│       └── rime.lib
 └── README.md
+```
+
+## 下载方法
+
+运行脚本自动下载32位和64位库：
+
+```powershell
+.\scripts\get-rime-windows.ps1
 ```
 
 ## 使用方式
 
-CMake 中已配置 `librime` imported target，直接链接即可：
-
-```cmake
-target_link_libraries(your_target PRIVATE librime)
-```
-
-## 更新方法
-
-1. 从 https://github.com/rime/librime/releases 下载最新 macOS 预编译包
-2. 解压头文件到 `include/`
-3. 解压库文件到 `lib/`
-4. 更新本文档的版本信息
+CMake 会根据目标架构自动选择正确的库目录。

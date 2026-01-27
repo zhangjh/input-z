@@ -8,6 +8,12 @@
 #ifndef SUYAN_CORE_INPUT_ENGINE_H
 #define SUYAN_CORE_INPUT_ENGINE_H
 
+// Qt 头文件必须在 rime_api.h 之前包含
+// 因为 rime_api.h 定义了 Bool 宏，与 Qt 的 qmetatype.h 冲突
+#ifdef _WIN32
+#include <QtCore/qglobal.h>
+#endif
+
 #include <string>
 #include <vector>
 #include <functional>

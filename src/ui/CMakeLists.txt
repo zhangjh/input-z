@@ -25,6 +25,11 @@ if(APPLE)
     list(APPEND UI_SOURCES candidate_window_mac.mm)
 endif()
 
+# Windows 特定源文件
+if(WIN32)
+    list(APPEND UI_SOURCES candidate_window_win.cpp)
+endif()
+
 # 创建 UI 层静态库
 add_library(suyan_ui STATIC
     ${UI_SOURCES}
@@ -52,6 +57,13 @@ if(APPLE)
     target_link_libraries(suyan_ui PUBLIC
         ${COCOA_FRAMEWORK}
         ${APPKIT_FRAMEWORK}
+    )
+endif()
+
+# Windows 特定链接
+if(WIN32)
+    target_link_libraries(suyan_ui PUBLIC
+        dwmapi
     )
 endif()
 

@@ -46,19 +46,36 @@ if(APPLE)
     
 elseif(WIN32)
     # Windows 平台配置
-    # Qt 配置 - 需要用户设置 Qt6_DIR 或通过 CMAKE_PREFIX_PATH 指定
-    # 示例: cmake -DQt6_DIR="C:/Qt/6.6.0/msvc2019_64/lib/cmake/Qt6" ..
     
     # librime 配置 (Windows)
-    set(LIBRIME_WINDOWS_DIR "${CMAKE_SOURCE_DIR}/deps/librime-windows")
-    set(LIBRIME_INCLUDE_DIR "${LIBRIME_WINDOWS_DIR}/include")
-    set(LIBRIME_LIB_DIR "${LIBRIME_WINDOWS_DIR}/lib")
-    set(LIBRIME_BIN_DIR "${LIBRIME_WINDOWS_DIR}/bin")
+    set(LIBRIME_DIR "${CMAKE_SOURCE_DIR}/deps/librime")
+    set(LIBRIME_INCLUDE_DIR "${LIBRIME_DIR}/include")
     
-    # 创建 librime imported target (Windows)
+    # 根据目标架构选择库目录
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(LIBRIME_LIB_DIR "${LIBRIME_DIR}/lib/x64")
+        set(SUYAN_ARCH "x64")
+        set(SUYAN_BUILD_FULL ON)
+    else()
+        set(LIBRIME_LIB_DIR "${LIBRIME_DIR}/lib/x86")
+        set(SUYAN_ARCH "x86")
+        set(SUYAN_BUILD_FULL OFF)
+    endif()
+    
+    message(STATUS "Target architecture: ${SUYAN_ARCH}")
+    message(STATUS "librime library: ${LIBRIME_LIB_DIR}")
+    
+    # 32位只构建轻量级TSF客户端，不需要Qt和librime
+    if(NOT SUYAN_BUILD_FULL)
+        message(STATUS "Building 32-bit TSF client only (no Qt/RIME)")
+        add_subdirectory(src/platform/windows/tsf_client)
+        return()
+    endif()
+    
+    # 64位完整版本需要librime
     add_library(librime SHARED IMPORTED)
     set_target_properties(librime PROPERTIES
-        IMPORTED_LOCATION "${LIBRIME_BIN_DIR}/rime.dll"
+        IMPORTED_LOCATION "${LIBRIME_LIB_DIR}/rime.dll"
         IMPORTED_IMPLIB "${LIBRIME_LIB_DIR}/rime.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${LIBRIME_INCLUDE_DIR}"
     )

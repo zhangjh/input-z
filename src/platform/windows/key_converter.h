@@ -17,6 +17,10 @@
 
 #ifdef _WIN32
 
+// Qt 头文件必须在 Windows 头文件之前包含
+// 因为 Windows 头文件定义了 Bool 宏，与 Qt 的 qmetatype.h 冲突
+#include <QtCore/qglobal.h>
+
 #include <windows.h>
 
 namespace suyan {

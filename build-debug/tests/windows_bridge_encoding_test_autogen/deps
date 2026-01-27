@@ -1,4 +1,0 @@
-windows_bridge_encoding_test_autogen/timestamp: \
-	/Users/zhangjh/dev/input-z/tests/CMakeLists.txt \
-	/Users/zhangjh/dev/input-z/tests/platform/windows/windows_bridge_encoding_test.cpp \
-	/opt/homebrew/bin/cmake

@@ -1,14 +1,12 @@
 /**
  * TrayManager 实现
- * Task 1.1: Windows 平台目录结构
- * 
- * 占位符实现，将在 Task 7 中完成
+ * Task 7: TrayManager 实现
  */
 
-#ifdef _WIN32
-
 #include "tray_manager.h"
+#include "input_engine.h"
 #include <QApplication>
+#include <QMessageBox>
 
 namespace suyan {
 
@@ -17,32 +15,39 @@ TrayManager& TrayManager::instance() {
     return instance;
 }
 
-TrayManager::TrayManager() = default;
+TrayManager::TrayManager()
+    : currentMode_(InputMode::Chinese) {
+}
 
 TrayManager::~TrayManager() {
     shutdown();
 }
 
 bool TrayManager::initialize(const std::string& resourcePath) {
-    // TODO: Task 7.1 实现
     if (initialized_) {
         return true;
     }
     
     resourcePath_ = resourcePath;
     
-    // 检查系统托盘是否可用
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         return false;
     }
     
-    // 创建托盘图标
     trayIcon_ = new QSystemTrayIcon(this);
     
-    // 创建菜单
     createMenu();
     
-    // 连接信号
+    QIcon defaultIcon = loadIcon(QStringLiteral("chinese.svg"));
+    if (defaultIcon.isNull()) {
+        defaultIcon = loadIcon(QStringLiteral("chinese.png"));
+    }
+    if (defaultIcon.isNull()) {
+        defaultIcon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+    }
+    trayIcon_->setIcon(defaultIcon);
+    trayIcon_->setToolTip(QStringLiteral("素言输入法 - 中文"));
+    
     connect(trayIcon_, &QSystemTrayIcon::activated,
             this, &TrayManager::onTrayActivated);
     
@@ -51,7 +56,6 @@ bool TrayManager::initialize(const std::string& resourcePath) {
 }
 
 void TrayManager::shutdown() {
-    // TODO: Task 7.1 实现
     if (!initialized_) {
         return;
     }
@@ -67,11 +71,48 @@ void TrayManager::shutdown() {
         trayMenu_ = nullptr;
     }
     
+    toggleModeAction_ = nullptr;
+    settingsAction_ = nullptr;
+    aboutAction_ = nullptr;
+    exitAction_ = nullptr;
+    
     initialized_ = false;
 }
 
 void TrayManager::updateIcon(InputMode mode) {
-    // TODO: Task 7.3 实现
+    if (!trayIcon_) {
+        return;
+    }
+    
+    currentMode_ = mode;
+    
+    QString iconName;
+    QString tooltip;
+    
+    switch (mode) {
+    case InputMode::Chinese:
+        iconName = QStringLiteral("chinese");
+        tooltip = QStringLiteral("素言输入法 - 中文");
+        break;
+    case InputMode::English:
+    case InputMode::TempEnglish:
+        iconName = QStringLiteral("english");
+        tooltip = QStringLiteral("素言输入法 - 英文");
+        break;
+    }
+    
+    QIcon icon = loadIcon(iconName + QStringLiteral(".svg"));
+    if (icon.isNull()) {
+        icon = loadIcon(iconName + QStringLiteral(".png"));
+    }
+    if (icon.isNull()) {
+        icon = loadIcon(iconName + QStringLiteral(".ico"));
+    }
+    
+    if (!icon.isNull()) {
+        trayIcon_->setIcon(icon);
+    }
+    trayIcon_->setToolTip(tooltip);
 }
 
 void TrayManager::show() {
@@ -87,26 +128,21 @@ void TrayManager::hide() {
 }
 
 void TrayManager::createMenu() {
-    // TODO: Task 7.2 实现
     trayMenu_ = new QMenu();
     
-    // 切换中/英文
-    toggleModeAction_ = trayMenu_->addAction(QString::fromUtf8("切换中/英文"));
+    toggleModeAction_ = trayMenu_->addAction(QStringLiteral("切换中/英文"));
     connect(toggleModeAction_, &QAction::triggered, this, &TrayManager::onToggleMode);
     
-    // 设置（暂时禁用）
-    settingsAction_ = trayMenu_->addAction(QString::fromUtf8("设置..."));
+    settingsAction_ = trayMenu_->addAction(QStringLiteral("设置..."));
     settingsAction_->setEnabled(false);
     connect(settingsAction_, &QAction::triggered, this, &TrayManager::onOpenSettings);
     
     trayMenu_->addSeparator();
     
-    // 关于
-    aboutAction_ = trayMenu_->addAction(QString::fromUtf8("关于素言"));
+    aboutAction_ = trayMenu_->addAction(QStringLiteral("关于素言"));
     connect(aboutAction_, &QAction::triggered, this, &TrayManager::onShowAbout);
     
-    // 退出
-    exitAction_ = trayMenu_->addAction(QString::fromUtf8("退出"));
+    exitAction_ = trayMenu_->addAction(QStringLiteral("退出"));
     connect(exitAction_, &QAction::triggered, this, &TrayManager::onExit);
     
     if (trayIcon_) {
@@ -115,15 +151,19 @@ void TrayManager::createMenu() {
 }
 
 QIcon TrayManager::loadIcon(const QString& name) {
-    // TODO: Task 7.3 实现
-    QString iconPath = QString::fromStdString(resourcePath_) + "/" + name;
-    return QIcon(iconPath);
+    QString iconPath = QString::fromStdString(resourcePath_) + QStringLiteral("/") + name;
+    QIcon icon(iconPath);
+    
+    if (icon.isNull()) {
+        iconPath = QString::fromStdString(resourcePath_) + QStringLiteral("/status/") + name;
+        icon = QIcon(iconPath);
+    }
+    
+    return icon;
 }
 
 void TrayManager::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
-    // TODO: Task 7.2 实现
     if (reason == QSystemTrayIcon::Trigger) {
-        // 单击切换模式
         emit toggleModeRequested();
     }
 }
@@ -145,5 +185,3 @@ void TrayManager::onExit() {
 }
 
 } // namespace suyan
-
-#endif // _WIN32

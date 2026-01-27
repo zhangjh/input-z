@@ -1,0 +1,31 @@
+#include <windows.h>
+
+IDI_ICON1 ICON "../../resources/icons/app-icon.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "zhangjh"
+            VALUE "FileDescription", "SuYan Input Method Server"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "SuYanServer"
+            VALUE "OriginalFilename", "SuYanServer.exe"
+            VALUE "ProductName", "SuYan"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
