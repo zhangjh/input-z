@@ -315,7 +315,6 @@ jobs:
         shell: pwsh
         run: |
           vcpkg install yaml-cpp:x64-windows sqlite3:x64-windows
-          vcpkg install yaml-cpp:x86-windows sqlite3:x86-windows
       
       - name: Install NSIS
         shell: pwsh
@@ -419,11 +418,9 @@ jobs:
           $buildDir = "build-win-x86"
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
           
-          cmake -G "Visual Studio 17 2022" -A Win32 `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -S . -B $buildDir
+          cmake -G "Visual Studio 17 2022" -A Win32 -S . -B $buildDir
           
-          cmake --build $buildDir --config Release
+          cmake --build $buildDir --config Release --target SuYanTSFClient
       
       - name: Copy 32-bit DLL
         shell: pwsh
