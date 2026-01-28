@@ -306,7 +306,18 @@ jobs:
           arch: 'win64_msvc2019_64'
           cache: true
       
+      - name: Cache Windows dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/yaml-cpp
+            deps/sqlite3
+            deps/librime
+          key: windows-deps-yaml0.8.0-sqlite3.45.0-librime${{ env.LIBRIME_VERSION }}
+      
       - name: Download and build yaml-cpp
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $version = "0.8.0"
@@ -334,6 +345,7 @@ jobs:
           Write-Host "yaml-cpp installed to $yamlDir"
       
       - name: Download SQLite3
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           mkdir deps\sqlite3\include
@@ -367,6 +379,7 @@ jobs:
           echo "C:\Program Files\7-Zip" >> $env:GITHUB_PATH
       
       - name: Download librime
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $tag = "${{ env.LIBRIME_VERSION }}"
@@ -522,11 +535,27 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Extract version from tag
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Extract version and release notes
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          
+          # 从 tag message 提取 release notes（跳过第一行标题）
+          NOTES=$(git tag -l --format='%(contents:body)' "v${VERSION}" | sed '/^$/d')
+          if [ -z "$NOTES" ] || [ "$NOTES" = "更新内容待补充" ]; then
+            NOTES="暂无更新说明"
+          fi
+          
+          # 处理多行内容
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
       
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
@@ -551,7 +580,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          generate_release_notes: true
           files: |
             artifacts/macos/*
             artifacts/windows/*
@@ -559,35 +587,21 @@ jobs:
           body: |
             ## 素言输入法 v${{ steps.version.outputs.version }}
             
-            ### macOS
-            - `SuYan-${{ steps.version.outputs.version }}-macos.pkg` - macOS 安装包
-            - `SuYan-Uninstaller-${{ steps.version.outputs.version }}-macos.zip` - macOS 卸载器
+            ### 更新内容
+            ${{ steps.version.outputs.notes }}
             
-            #### macOS 安装方法
-            1. 下载 `SuYan-${{ steps.version.outputs.version }}-macos.pkg`
-            2. 双击运行安装程序
-            3. 在系统设置 → 键盘 → 输入法中添加「素言输入法」
+            ---
             
-            #### macOS 系统要求
+            ### 下载
+            
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | macOS | `SuYan-${{ steps.version.outputs.version }}-macos.pkg` | 安装包 |
+            | macOS | `SuYan-Uninstaller-${{ steps.version.outputs.version }}-macos.zip` | 卸载器 |
+            | Windows | `SuYan-${{ steps.version.outputs.version }}-windows.exe` | 安装程序 |
+            
+            ### 系统要求
             - macOS 13.0 (Ventura) 或更高版本
-            
-            ---
-            
-            ### Windows
-            - `SuYan-${{ steps.version.outputs.version }}-windows.exe` - Windows 安装程序
-            
-            #### Windows 安装方法
-            1. 下载 `SuYan-${{ steps.version.outputs.version }}-windows.exe`
-            2. 以管理员身份运行安装程序
-            3. 在 Windows 设置 → 时间和语言 → 语言和区域 → 中文 → 语言选项 → 添加键盘
-            
-            #### Windows 系统要求
             - Windows 10 64位 或更高版本
-            
-            ---
-            
-            ### 注意事项
-            - 首次安装后可能需要注销或重启才能生效
-            - 如遇到安全提示，请允许运行
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

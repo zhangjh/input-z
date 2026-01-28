@@ -4,16 +4,21 @@
 # ============================================
 #
 # 用法:
-#   ./scripts/create-release-tag.sh [选项]
+#   ./scripts/create-release-tag.sh [版本选项] [release notes]
 #
-# 选项:
+# 版本选项:
 #   (无参数)    使用 brand.conf 中的 IME_VERSION 创建 tag
 #   patch       递增补丁版本 (1.0.0 -> 1.0.1)
 #   minor       递增次版本号 (1.0.0 -> 1.1.0)
 #   major       递增主版本号 (1.0.0 -> 2.0.0)
 #   1.2.3       直接指定版本号
 #
-# 版本配置文件: brand.conf (IME_VERSION)
+# Release Notes:
+#   第二个参数可传入更新内容，如不传则使用占位符
+#
+# 示例:
+#   ./scripts/create-release-tag.sh patch "修复了xxx问题"
+#   ./scripts/create-release-tag.sh 1.2.0 "新增xxx功能"
 
 set -e
 
@@ -95,6 +100,7 @@ main() {
     # 确定新版本号
     local new_version=""
     local input="$1"
+    local release_notes="$2"
     
     if [ -z "${input}" ]; then
         new_version="${brand_version}"
@@ -104,8 +110,22 @@ main() {
         new_version=$(increment_version "${brand_version}" "${input}")
     else
         log_error "无效的参数: ${input}"
-        echo "用法: $0 [版本号|major|minor|patch]"
+        echo "用法: $0 [版本号|major|minor|patch] [release notes]"
         exit 1
+    fi
+    
+    # 设置 tag message
+    local tag_message=""
+    if [ -n "${release_notes}" ]; then
+        tag_message="Release v${new_version}
+
+${release_notes}"
+        log_info "Release Notes: ${release_notes}"
+    else
+        tag_message="Release v${new_version}
+
+更新内容待补充"
+        log_warning "未提供 Release Notes，将使用占位符"
     fi
     
     # 检查 tag 是否已存在
@@ -139,7 +159,7 @@ main() {
     fi
     
     # 创建 tag
-    git tag -a "v${new_version}" -m "Release v${new_version}"
+    git tag -a "v${new_version}" -m "${tag_message}"
     log_success "已创建 tag: v${new_version}"
     
     # 推送 tag
