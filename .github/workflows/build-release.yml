@@ -445,9 +445,10 @@ jobs:
           
           $sqliteDir = "${{ github.workspace }}\deps\sqlite3"
           $yamlDir = "${{ github.workspace }}\deps\yaml-cpp"
+          $qtDir = "${{ env.QT_ROOT_DIR }}\lib\cmake\Qt6"
           
           cmake -G "Visual Studio 17 2022" -A x64 `
-            -DQt6_DIR="$env:Qt6_DIR" `
+            -DQt6_DIR="$qtDir" `
             -DSQLite3_INCLUDE_DIR="$sqliteDir\include" `
             -DSQLite3_LIBRARY="$sqliteDir\lib\sqlite3.lib" `
             -Dyaml-cpp_DIR="$yamlDir\lib\cmake\yaml-cpp" `
@@ -481,8 +482,8 @@ jobs:
       - name: Deploy Qt dependencies
         shell: pwsh
         run: |
-          $qtBinDir = Split-Path -Parent $env:Qt6_DIR
-          $qtBinDir = Join-Path (Split-Path -Parent $qtBinDir) "bin"
+          $qtRoot = "${{ env.QT_ROOT_DIR }}"
+          $qtBinDir = Join-Path $qtRoot "bin"
           $env:PATH = "$qtBinDir;$env:PATH"
           
           windeployqt --release --no-translations "build-win\bin\Release\SuYanServer.exe"
