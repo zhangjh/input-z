@@ -4,10 +4,10 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'  # 匹配 v1.0.0, v1.0.1 等格式的 tag
+      - 'v*'
 
 permissions:
-  contents: write  # 允许创建 Release
+  contents: write
 
 env:
   QT_VERSION: '6.5.3'
@@ -16,7 +16,7 @@ env:
 jobs:
   build-macos:
     name: Build macOS PKG
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
     
     steps:
       - name: Checkout code
@@ -46,10 +46,8 @@ jobs:
         run: |
           echo "Downloading librime ${LIBRIME_VERSION}..."
           
-          # 获取 release 信息
           RELEASE_JSON=$(curl -s "https://api.github.com/repos/rime/librime/releases/tags/${LIBRIME_VERSION}")
           
-          # 检查 API 响应
           if echo "${RELEASE_JSON}" | jq -e '.assets' > /dev/null 2>&1; then
             echo "API response OK"
           else
@@ -58,7 +56,6 @@ jobs:
             exit 1
           fi
           
-          # 获取 macOS universal 包的文件名
           ASSET_NAME=$(echo "${RELEASE_JSON}" | jq -r '.assets[].name' | grep "macOS-universal.*\.tar\.bz2" | head -1)
           
           if [ -z "${ASSET_NAME}" ]; then
@@ -73,31 +70,24 @@ jobs:
           curl -L -o librime.tar.bz2 \
             "https://github.com/rime/librime/releases/download/${LIBRIME_VERSION}/${ASSET_NAME}"
           
-          # 解压到临时目录
           mkdir -p librime_temp
           tar -xjf librime.tar.bz2 -C librime_temp
           
-          # 查找解压后的目录结构
           echo "Extracted contents:"
           find librime_temp -type f \( -name "*.h" -o -name "*.dylib" \) | head -20
           
-          # 复制到 deps 目录
           mkdir -p deps/librime/include deps/librime/lib
           
-          # 尝试不同的目录结构
           if [ -d "librime_temp/dist" ]; then
             cp librime_temp/dist/include/*.h deps/librime/include/
             cp librime_temp/dist/lib/librime*.dylib deps/librime/lib/
           else
-            # 直接在根目录查找
             find librime_temp -name "*.h" -exec cp {} deps/librime/include/ \;
             find librime_temp -name "librime*.dylib" -exec cp {} deps/librime/lib/ \;
           fi
           
-          # 清理
           rm -rf librime_temp librime.tar.bz2
           
-          # 验证
           echo "=== Include files ==="
           ls -la deps/librime/include/
           echo "=== Library files ==="
@@ -107,7 +97,6 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          # install-qt-action 设置了 Qt6_DIR 环境变量
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${Qt6_DIR}/.." \
@@ -148,16 +137,13 @@ jobs:
           
           mkdir -p "${OUTPUT_DIR}"
           
-          # 创建安装根目录
           INSTALL_ROOT="${OUTPUT_DIR}/install_root"
           mkdir -p "${INSTALL_ROOT}/Library/Input Methods"
           cp -R "${BUNDLE}" "${INSTALL_ROOT}/Library/Input Methods/"
           
-          # Ad-hoc 签名
           echo "Signing bundle with ad-hoc signature..."
           codesign --force --deep --sign - "${INSTALL_ROOT}/Library/Input Methods/SuYan.app" || true
           
-          # 创建组件包
           echo "Creating component package..."
           pkgbuild \
             --root "${INSTALL_ROOT}" \
@@ -167,7 +153,6 @@ jobs:
             --scripts "${PKG_SCRIPTS}" \
             "${OUTPUT_DIR}/SuYan-component.pkg"
           
-          # 创建分发描述文件
           cat > "${OUTPUT_DIR}/distribution.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <installer-gui-script minSpecVersion="2">
@@ -191,20 +176,18 @@ jobs:
           </installer-gui-script>
           EOF
           
-          # 创建最终安装包
           echo "Creating final PKG..."
           productbuild \
             --distribution "${OUTPUT_DIR}/distribution.xml" \
             --package-path "${OUTPUT_DIR}" \
             --resources "${PKG_SCRIPTS}/resources" \
-            "${OUTPUT_DIR}/SuYan-${VERSION}.pkg"
+            "${OUTPUT_DIR}/SuYan-${VERSION}-macos.pkg"
           
-          # 清理临时文件
           rm -rf "${INSTALL_ROOT}"
           rm -f "${OUTPUT_DIR}/SuYan-component.pkg"
           rm -f "${OUTPUT_DIR}/distribution.xml"
           
-          echo "PKG created: ${OUTPUT_DIR}/SuYan-${VERSION}.pkg"
+          echo "PKG created: ${OUTPUT_DIR}/SuYan-${VERSION}-macos.pkg"
           ls -lh "${OUTPUT_DIR}/"
       
       - name: Build uninstaller
@@ -213,11 +196,9 @@ jobs:
           OUTPUT_DIR="output"
           UNINSTALLER_APP="${OUTPUT_DIR}/SuYan卸载器.app"
           
-          # 创建 .app 目录结构
           mkdir -p "${UNINSTALLER_APP}/Contents/MacOS"
           mkdir -p "${UNINSTALLER_APP}/Contents/Resources"
           
-          # 创建 Info.plist
           cat > "${UNINSTALLER_APP}/Contents/Info.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -245,7 +226,6 @@ jobs:
           </plist>
           PLIST
           
-          # 创建可执行脚本
           cat > "${UNINSTALLER_APP}/Contents/MacOS/uninstall" << 'SCRIPT'
           #!/bin/bash
           
@@ -285,9 +265,8 @@ jobs:
           
           chmod +x "${UNINSTALLER_APP}/Contents/MacOS/uninstall"
           
-          # 创建 ZIP 包
           cd "${OUTPUT_DIR}"
-          zip -r "SuYan-Uninstaller-${VERSION}.zip" "SuYan卸载器.app"
+          zip -r "SuYan-Uninstaller-${VERSION}-macos.zip" "SuYan卸载器.app"
           rm -rf "SuYan卸载器.app"
           
           echo "Uninstaller created"
@@ -301,38 +280,252 @@ jobs:
             output/SuYan-*.pkg
             output/SuYan-Uninstaller-*.zip
           retention-days: 7
+
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       
-      - name: Create GitHub Release (Draft)
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "Building version: $version"
+      
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+          cache: true
+      
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+      
+      - name: Install 7-Zip
+        shell: pwsh
+        run: |
+          choco install 7zip -y
+          echo "C:\Program Files\7-Zip" >> $env:GITHUB_PATH
+      
+      - name: Download librime
+        shell: pwsh
+        run: |
+          $tag = "${{ env.LIBRIME_VERSION }}"
+          $apiUrl = "https://api.github.com/repos/rime/librime/releases/tags/$tag"
+          
+          $depsDir = "deps\librime"
+          $lib32Dir = "$depsDir\lib\x86"
+          $lib64Dir = "$depsDir\lib\x64"
+          $includeDir = "$depsDir\include"
+          
+          New-Item -ItemType Directory -Force -Path $lib32Dir | Out-Null
+          New-Item -ItemType Directory -Force -Path $lib64Dir | Out-Null
+          New-Item -ItemType Directory -Force -Path $includeDir | Out-Null
+          
+          Write-Host "Fetching release info..."
+          $response = Invoke-RestMethod -Uri $apiUrl -Headers @{ Accept = "application/vnd.github.v3+json" }
+          Write-Host "Release: $($response.tag_name)"
+          
+          $patternX86 = "rime-[0-9a-fA-F]+-Windows-msvc-x86\.7z"
+          $patternX64 = "rime-[0-9a-fA-F]+-Windows-msvc-x64\.7z"
+          
+          $downloads = @()
+          foreach ($asset in $response.assets) {
+              $name = $asset.name
+              if ($name -match $patternX86 -and $name -notmatch "deps") {
+                  $downloads += @{ url = $asset.browser_download_url; name = $name; type = "x86" }
+              }
+              elseif ($name -match $patternX64 -and $name -notmatch "deps") {
+                  $downloads += @{ url = $asset.browser_download_url; name = $name; type = "x64" }
+              }
+          }
+          
+          if ($downloads.Count -lt 2) {
+              Write-Host "Error: Could not find both x86 and x64 releases" -ForegroundColor Red
+              exit 1
+          }
+          
+          $tempDir = "rime-download"
+          New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+          
+          foreach ($dl in $downloads) {
+              $outFile = "$tempDir\$($dl.name)"
+              $extractDir = "$tempDir\$($dl.name -replace '\.7z', '')"
+              
+              Write-Host "Downloading $($dl.name)..."
+              Invoke-WebRequest -Uri $dl.url -OutFile $outFile
+              
+              Write-Host "Extracting..."
+              7z x $outFile -o"$extractDir" -y | Out-Null
+              
+              $distDir = "$extractDir\dist"
+              $targetLibDir = if ($dl.type -eq "x86") { $lib32Dir } else { $lib64Dir }
+              
+              Copy-Item "$distDir\lib\rime.dll" $targetLibDir -Force
+              Copy-Item "$distDir\lib\rime.lib" $targetLibDir -Force
+              if (Test-Path "$distDir\lib\rime.pdb") {
+                  Copy-Item "$distDir\lib\rime.pdb" $targetLibDir -Force
+              }
+              
+              if ($dl.type -eq "x64") {
+                  Copy-Item "$distDir\include\rime_*.h" $includeDir -Force
+              }
+              
+              Write-Host "$($dl.type) libraries copied" -ForegroundColor Green
+          }
+          
+          Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "librime downloaded successfully"
+      
+      - name: Configure and Build x64
+        shell: pwsh
+        run: |
+          $buildDir = "build-win"
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          
+          cmake -G "Visual Studio 17 2022" -A x64 `
+            -DQt6_DIR="$env:Qt6_DIR" `
+            -S . -B $buildDir
+          
+          cmake --build $buildDir --config Release
+      
+      - name: Configure and Build x86 (TSF client only)
+        shell: pwsh
+        run: |
+          $buildDir = "build-win-x86"
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          
+          cmake -G "Visual Studio 17 2022" -A Win32 -S . -B $buildDir
+          
+          cmake --build $buildDir --config Release
+      
+      - name: Copy 32-bit DLL
+        shell: pwsh
+        run: |
+          Copy-Item "build-win-x86\src\platform\windows\tsf_client\Release\SuYan32.dll" `
+            "build-win\bin\Release\" -Force
+      
+      - name: Deploy Qt dependencies
+        shell: pwsh
+        run: |
+          $qtBinDir = Split-Path -Parent $env:Qt6_DIR
+          $qtBinDir = Join-Path (Split-Path -Parent $qtBinDir) "bin"
+          $env:PATH = "$qtBinDir;$env:PATH"
+          
+          windeployqt --release --no-translations "build-win\bin\Release\SuYanServer.exe"
+      
+      - name: Update NSIS version
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $nsiFile = "installer\suyan.nsi"
+          $content = Get-Content $nsiFile -Raw
+          $content = $content -replace '!define PRODUCT_VERSION ".*"', "!define PRODUCT_VERSION `"$version`""
+          Set-Content $nsiFile $content
+      
+      - name: Build installer
+        shell: pwsh
+        working-directory: installer
+        run: |
+          makensis suyan.nsi
+      
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          Move-Item "installer\SuYan-$version-Setup.exe" "installer\SuYan-$version-windows.exe"
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuYan-${{ steps.version.outputs.version }}-windows
+          path: installer/SuYan-*-windows.exe
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+      
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: SuYan-${{ steps.version.outputs.version }}-macos
+          path: artifacts/macos
+      
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: SuYan-${{ steps.version.outputs.version }}-windows
+          path: artifacts/windows
+      
+      - name: List artifacts
+        run: |
+          echo "=== macOS artifacts ==="
+          ls -la artifacts/macos/
+          echo "=== Windows artifacts ==="
+          ls -la artifacts/windows/
+      
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
           files: |
-            output/SuYan-*.pkg
-            output/SuYan-Uninstaller-*.zip
+            artifacts/macos/*
+            artifacts/windows/*
           name: SuYan v${{ steps.version.outputs.version }}
           body: |
             ## 素言输入法 v${{ steps.version.outputs.version }}
             
-            ### 下载
-            - `SuYan-${{ steps.version.outputs.version }}.pkg` - 安装包
-            - `SuYan-Uninstaller-${{ steps.version.outputs.version }}.zip` - 卸载器
+            ### macOS
+            - `SuYan-${{ steps.version.outputs.version }}-macos.pkg` - macOS 安装包
+            - `SuYan-Uninstaller-${{ steps.version.outputs.version }}-macos.zip` - macOS 卸载器
             
-            ### 安装方法
-            1. 下载 `SuYan-${{ steps.version.outputs.version }}.pkg`
+            #### macOS 安装方法
+            1. 下载 `SuYan-${{ steps.version.outputs.version }}-macos.pkg`
             2. 双击运行安装程序
             3. 在系统设置 → 键盘 → 输入法中添加「素言输入法」
             
-            ### 卸载方法
-            1. 下载并解压 `SuYan-Uninstaller-${{ steps.version.outputs.version }}.zip`
-            2. 双击运行「SuYan卸载器」
-            3. 按提示完成卸载
-            
-            ### 系统要求
+            #### macOS 系统要求
             - macOS 13.0 (Ventura) 或更高版本
             
+            ---
+            
+            ### Windows
+            - `SuYan-${{ steps.version.outputs.version }}-windows.exe` - Windows 安装程序
+            
+            #### Windows 安装方法
+            1. 下载 `SuYan-${{ steps.version.outputs.version }}-windows.exe`
+            2. 以管理员身份运行安装程序
+            3. 在 Windows 设置 → 时间和语言 → 语言和区域 → 中文 → 语言选项 → 添加键盘
+            
+            #### Windows 系统要求
+            - Windows 10 64位 或更高版本
+            
+            ---
+            
             ### 注意事项
-            - 首次安装后需要注销或重启才能生效
-            - 如遇到安全提示，请在系统设置 → 隐私与安全性中允许运行
+            - 首次安装后可能需要注销或重启才能生效
+            - 如遇到安全提示，请允许运行
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
