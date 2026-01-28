@@ -75,6 +75,16 @@ struct FrequencyConfig {
 };
 
 /**
+ * 剪贴板配置结构
+ */
+struct ClipboardConfig {
+    bool enabled = true;           // 是否启用剪贴板功能
+    int maxAgeDays = 30;           // 保留天数（1-365）
+    int maxCount = 1000;           // 最大保留条数（100-10000）
+    std::string hotkey = "Cmd+Shift+V";  // 呼出快捷键
+};
+
+/**
  * 应用配置结构（汇总所有配置）
  */
 struct AppConfig {
@@ -82,6 +92,7 @@ struct AppConfig {
     ThemeConfig theme;
     InputConfig input;
     FrequencyConfig frequency;
+    ClipboardConfig clipboard;
 };
 
 /**
@@ -163,6 +174,11 @@ public:
      */
     FrequencyConfig getFrequencyConfig() const;
 
+    /**
+     * 获取剪贴板配置
+     */
+    ClipboardConfig getClipboardConfig() const;
+
     // ========== 配置写入 ==========
 
     /**
@@ -199,6 +215,26 @@ public:
      * 设置最小词频阈值
      */
     void setFrequencyMinCount(int count);
+
+    /**
+     * 设置剪贴板功能开关
+     */
+    void setClipboardEnabled(bool enabled);
+
+    /**
+     * 设置剪贴板保留天数
+     */
+    void setClipboardMaxAgeDays(int days);
+
+    /**
+     * 设置剪贴板最大保留条数
+     */
+    void setClipboardMaxCount(int count);
+
+    /**
+     * 设置剪贴板呼出快捷键
+     */
+    void setClipboardHotkey(const std::string& hotkey);
 
     // ========== 通用配置访问 ==========
 
@@ -274,6 +310,11 @@ signals:
      * 主题配置变更信号
      */
     void themeConfigChanged(const ThemeConfig& config);
+
+    /**
+     * 剪贴板配置变更信号
+     */
+    void clipboardConfigChanged(const ClipboardConfig& config);
 
 private:
     ConfigManager();

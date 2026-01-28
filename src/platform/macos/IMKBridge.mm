@@ -27,6 +27,8 @@
 #include "input_engine.h"
 #include "macos_bridge.h"
 #include "status_bar_manager.h"
+#include "config_manager.h"
+#include "clipboard_manager.h"
 
 #ifdef Bool
 #undef Bool
@@ -577,6 +579,18 @@ int SuYanIMK_ConvertModifiers(NSEventModifierFlags modifierFlags) {
         keyEquivalent:@""];
     layoutItem.target = self;
     [menu addItem:layoutItem];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    // 剪贴板设置子菜单
+    NSMenuItem* clipboardItem = [[NSMenuItem alloc]
+        initWithTitle:@"剪贴板"
+        action:nil
+        keyEquivalent:@""];
+    auto& statusBar = StatusBarManager::instance();
+    NSMenu* clipboardMenu = statusBar.createClipboardMenu();
+    clipboardItem.submenu = clipboardMenu;
+    [menu addItem:clipboardItem];
 
     [menu addItem:[NSMenuItem separatorItem]];
 

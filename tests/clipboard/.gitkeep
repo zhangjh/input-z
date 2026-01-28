@@ -1,0 +1,5 @@
+# Clipboard module tests
+# - clipboard_store_test.cpp
+# - image_storage_test.cpp
+# - clipboard_manager_test.cpp
+# - clipboard_ui_test.cpp

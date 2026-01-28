@@ -7,6 +7,7 @@
  * - 显示当前输入模式（中文/英文）
  * - 模式切换时更新图标
  * - 支持深色/浅色模式自适应
+ * - 剪贴板设置菜单集成
  */
 
 #ifndef SUYAN_PLATFORM_MACOS_STATUS_BAR_MANAGER_H
@@ -14,6 +15,14 @@
 
 #include <string>
 #include <functional>
+
+#ifdef __OBJC__
+@class NSMenu;
+@class NSMenuItem;
+#else
+typedef void NSMenu;
+typedef void NSMenuItem;
+#endif
 
 namespace suyan {
 
@@ -84,6 +93,31 @@ public:
      * 检查是否已初始化
      */
     bool isInitialized() const { return initialized_; }
+
+    // ========== 剪贴板菜单 ==========
+
+    /**
+     * 创建剪贴板设置子菜单
+     *
+     * 包含以下菜单项：
+     * - 启用/禁用剪贴板（复选框）
+     * - 保留时长（子菜单：1周/1月/自定义）
+     * - 最大条数（子菜单：500/1000/2000/自定义）
+     * - 修改快捷键
+     * - 清空历史（带确认）
+     *
+     * @return 剪贴板设置子菜单
+     */
+    NSMenu* createClipboardMenu();
+
+    /**
+     * 更新剪贴板菜单状态
+     *
+     * 根据当前配置更新菜单项的选中状态。
+     *
+     * @param menu 剪贴板菜单
+     */
+    void updateClipboardMenuState(NSMenu* menu);
 
 private:
     StatusBarManager();

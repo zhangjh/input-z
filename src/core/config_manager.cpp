@@ -149,6 +149,23 @@ bool ConfigManager::loadConfig() {
             }
         }
 
+        // 读取剪贴板配置
+        if (root["clipboard"]) {
+            auto clipboard = root["clipboard"];
+            if (clipboard["enabled"]) {
+                config_.clipboard.enabled = clipboard["enabled"].as<bool>();
+            }
+            if (clipboard["max_age_days"]) {
+                config_.clipboard.maxAgeDays = clipboard["max_age_days"].as<int>();
+            }
+            if (clipboard["max_count"]) {
+                config_.clipboard.maxCount = clipboard["max_count"].as<int>();
+            }
+            if (clipboard["hotkey"]) {
+                config_.clipboard.hotkey = clipboard["hotkey"].as<std::string>();
+            }
+        }
+
         return true;
     } catch (const YAML::Exception& e) {
         std::cerr << "ConfigManager: YAML 解析错误: " << e.what() << std::endl;
@@ -191,6 +208,14 @@ bool ConfigManager::saveConfig() {
         out << YAML::Key << "min_count" << YAML::Value << config_.frequency.minCount;
         out << YAML::EndMap;
 
+        // 写入剪贴板配置
+        out << YAML::Key << "clipboard" << YAML::Value << YAML::BeginMap;
+        out << YAML::Key << "enabled" << YAML::Value << config_.clipboard.enabled;
+        out << YAML::Key << "max_age_days" << YAML::Value << config_.clipboard.maxAgeDays;
+        out << YAML::Key << "max_count" << YAML::Value << config_.clipboard.maxCount;
+        out << YAML::Key << "hotkey" << YAML::Value << config_.clipboard.hotkey;
+        out << YAML::EndMap;
+
         out << YAML::EndMap;
 
         // 写入文件
@@ -222,6 +247,8 @@ void ConfigManager::notifyChange(const std::string& key) {
         emit layoutConfigChanged(config_.layout);
     } else if (key.find("theme") == 0) {
         emit themeConfigChanged(config_.theme);
+    } else if (key.find("clipboard") == 0) {
+        emit clipboardConfigChanged(config_.clipboard);
     }
 }
 
@@ -245,6 +272,10 @@ InputConfig ConfigManager::getInputConfig() const {
 
 FrequencyConfig ConfigManager::getFrequencyConfig() const {
     return config_.frequency;
+}
+
+ClipboardConfig ConfigManager::getClipboardConfig() const {
+    return config_.clipboard;
 }
 
 // ========== 配置写入 ==========
@@ -303,6 +334,40 @@ void ConfigManager::setFrequencyMinCount(int count) {
     }
 }
 
+void ConfigManager::setClipboardEnabled(bool enabled) {
+    if (config_.clipboard.enabled != enabled) {
+        config_.clipboard.enabled = enabled;
+        notifyChange("clipboard.enabled");
+    }
+}
+
+void ConfigManager::setClipboardMaxAgeDays(int days) {
+    if (days < 1) days = 1;
+    if (days > 365) days = 365;
+    
+    if (config_.clipboard.maxAgeDays != days) {
+        config_.clipboard.maxAgeDays = days;
+        notifyChange("clipboard.max_age_days");
+    }
+}
+
+void ConfigManager::setClipboardMaxCount(int count) {
+    if (count < 100) count = 100;
+    if (count > 10000) count = 10000;
+    
+    if (config_.clipboard.maxCount != count) {
+        config_.clipboard.maxCount = count;
+        notifyChange("clipboard.max_count");
+    }
+}
+
+void ConfigManager::setClipboardHotkey(const std::string& hotkey) {
+    if (config_.clipboard.hotkey != hotkey) {
+        config_.clipboard.hotkey = hotkey;
+        notifyChange("clipboard.hotkey");
+    }
+}
+
 // ========== 通用配置访问 ==========
 
 std::string ConfigManager::getString(const std::string& key, const std::string& defaultValue) const {
@@ -315,6 +380,8 @@ std::string ConfigManager::getString(const std::string& key, const std::string& 
         return config_.theme.customThemeName;
     } else if (key == "input.default_mode") {
         return defaultInputModeToString(config_.input.defaultMode);
+    } else if (key == "clipboard.hotkey") {
+        return config_.clipboard.hotkey;
     }
     return defaultValue;
 }
@@ -324,6 +391,10 @@ int ConfigManager::getInt(const std::string& key, int defaultValue) const {
         return config_.layout.pageSize;
     } else if (key == "frequency.min_count") {
         return config_.frequency.minCount;
+    } else if (key == "clipboard.max_age_days") {
+        return config_.clipboard.maxAgeDays;
+    } else if (key == "clipboard.max_count") {
+        return config_.clipboard.maxCount;
     }
     return defaultValue;
 }
@@ -331,6 +402,8 @@ int ConfigManager::getInt(const std::string& key, int defaultValue) const {
 bool ConfigManager::getBool(const std::string& key, bool defaultValue) const {
     if (key == "frequency.enabled") {
         return config_.frequency.enabled;
+    } else if (key == "clipboard.enabled") {
+        return config_.clipboard.enabled;
     }
     return defaultValue;
 }
@@ -344,6 +417,8 @@ void ConfigManager::setString(const std::string& key, const std::string& value) 
         setCustomThemeName(value);
     } else if (key == "input.default_mode") {
         setDefaultInputMode(stringToDefaultInputMode(value));
+    } else if (key == "clipboard.hotkey") {
+        setClipboardHotkey(value);
     }
 }
 
@@ -352,12 +427,18 @@ void ConfigManager::setInt(const std::string& key, int value) {
         setPageSize(value);
     } else if (key == "frequency.min_count") {
         setFrequencyMinCount(value);
+    } else if (key == "clipboard.max_age_days") {
+        setClipboardMaxAgeDays(value);
+    } else if (key == "clipboard.max_count") {
+        setClipboardMaxCount(value);
     }
 }
 
 void ConfigManager::setBool(const std::string& key, bool value) {
     if (key == "frequency.enabled") {
         setFrequencyEnabled(value);
+    } else if (key == "clipboard.enabled") {
+        setClipboardEnabled(value);
     }
 }
 

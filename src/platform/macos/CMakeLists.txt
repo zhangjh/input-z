@@ -64,6 +64,7 @@ target_include_directories(suyan_macos_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/ui
+    ${CMAKE_SOURCE_DIR}/src/clipboard
     ${LIBRIME_INCLUDE_DIR}
 )
 
@@ -71,6 +72,7 @@ target_include_directories(suyan_macos_bridge PRIVATE
 target_link_libraries(suyan_macos_bridge PRIVATE
     suyan_core
     suyan_ui
+    suyan_clipboard
     ${COCOA_FRAMEWORK}
     ${INPUTMETHODKIT_FRAMEWORK}
     ${CARBON_FRAMEWORK}
@@ -125,6 +127,7 @@ target_include_directories(SuYan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/ui
+    ${CMAKE_SOURCE_DIR}/src/clipboard
     ${LIBRIME_INCLUDE_DIR}
 )
 
@@ -136,6 +139,7 @@ target_link_libraries(SuYan PRIVATE
     # 内部库
     suyan_ui
     suyan_core
+    suyan_clipboard
     
     # macOS 框架
     ${COCOA_FRAMEWORK}

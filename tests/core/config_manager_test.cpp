@@ -70,6 +70,10 @@ public:
         // 重置测试
         allPassed &= testResetToDefaults();
         
+        // 剪贴板配置测试
+        allPassed &= testClipboardConfig();
+        allPassed &= testClipboardConfigPersistence();
+        
         // 信号测试
         allPassed &= testSignals();
         
@@ -355,6 +359,107 @@ private:
         return true;
     }
     
+    // ========== 剪贴板配置测试 ==========
+    
+    bool testClipboardConfig() {
+        auto& config = suyan::ConfigManager::instance();
+        
+        // 检查默认值
+        auto clipboardConfig = config.getClipboardConfig();
+        TEST_ASSERT(clipboardConfig.enabled == true, "剪贴板功能默认应该启用");
+        TEST_ASSERT(clipboardConfig.maxAgeDays == 30, "默认保留天数应该是 30");
+        TEST_ASSERT(clipboardConfig.maxCount == 1000, "默认最大条数应该是 1000");
+        TEST_ASSERT(clipboardConfig.hotkey == "Cmd+Shift+V", "默认快捷键应该是 Cmd+Shift+V");
+        
+        // 测试启用/禁用
+        config.setClipboardEnabled(false);
+        TEST_ASSERT(config.getClipboardConfig().enabled == false, "剪贴板功能应该被禁用");
+        config.setClipboardEnabled(true);
+        TEST_ASSERT(config.getClipboardConfig().enabled == true, "剪贴板功能应该被启用");
+        
+        // 测试保留天数
+        config.setClipboardMaxAgeDays(7);
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 7, "保留天数应该是 7");
+        
+        // 测试边界值
+        config.setClipboardMaxAgeDays(0);  // 应该被限制为 1
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 1, "保留天数应该被限制为 1");
+        config.setClipboardMaxAgeDays(500);  // 应该被限制为 365
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 365, "保留天数应该被限制为 365");
+        
+        // 测试最大条数
+        config.setClipboardMaxCount(500);
+        TEST_ASSERT(config.getClipboardConfig().maxCount == 500, "最大条数应该是 500");
+        
+        // 测试边界值
+        config.setClipboardMaxCount(50);  // 应该被限制为 100
+        TEST_ASSERT(config.getClipboardConfig().maxCount == 100, "最大条数应该被限制为 100");
+        config.setClipboardMaxCount(20000);  // 应该被限制为 10000
+        TEST_ASSERT(config.getClipboardConfig().maxCount == 10000, "最大条数应该被限制为 10000");
+        
+        // 测试快捷键
+        config.setClipboardHotkey("Ctrl+Shift+C");
+        TEST_ASSERT(config.getClipboardConfig().hotkey == "Ctrl+Shift+C", "快捷键应该是 Ctrl+Shift+C");
+        
+        // 测试通用访问
+        TEST_ASSERT(config.getBool("clipboard.enabled") == true, "通过通用访问获取启用状态");
+        TEST_ASSERT(config.getInt("clipboard.max_age_days") == 365, "通过通用访问获取保留天数");
+        TEST_ASSERT(config.getInt("clipboard.max_count") == 10000, "通过通用访问获取最大条数");
+        TEST_ASSERT(config.getString("clipboard.hotkey") == "Ctrl+Shift+C", "通过通用访问获取快捷键");
+        
+        // 测试通用设置
+        config.setBool("clipboard.enabled", false);
+        TEST_ASSERT(config.getClipboardConfig().enabled == false, "通过通用访问设置启用状态");
+        config.setInt("clipboard.max_age_days", 14);
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 14, "通过通用访问设置保留天数");
+        config.setInt("clipboard.max_count", 2000);
+        TEST_ASSERT(config.getClipboardConfig().maxCount == 2000, "通过通用访问设置最大条数");
+        config.setString("clipboard.hotkey", "Alt+V");
+        TEST_ASSERT(config.getClipboardConfig().hotkey == "Alt+V", "通过通用访问设置快捷键");
+        
+        // 恢复默认值
+        config.resetToDefaults();
+        
+        TEST_PASS("testClipboardConfig: 剪贴板配置读写正常");
+        return true;
+    }
+    
+    bool testClipboardConfigPersistence() {
+        auto& config = suyan::ConfigManager::instance();
+        
+        // 设置剪贴板配置
+        config.setClipboardEnabled(false);
+        config.setClipboardMaxAgeDays(7);
+        config.setClipboardMaxCount(500);
+        config.setClipboardHotkey("Cmd+Alt+V");
+        
+        // 保存
+        bool saveResult = config.save();
+        TEST_ASSERT(saveResult, "保存配置应该成功");
+        
+        // 重置为默认值
+        config.resetToDefaults();
+        TEST_ASSERT(config.getClipboardConfig().enabled == true, "重置后剪贴板应该启用");
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 30, "重置后保留天数应该是 30");
+        
+        // 重新加载
+        bool reloadResult = config.reload();
+        TEST_ASSERT(reloadResult, "重新加载配置应该成功");
+        
+        // 验证配置已恢复
+        TEST_ASSERT(config.getClipboardConfig().enabled == false, "重新加载后剪贴板应该禁用");
+        TEST_ASSERT(config.getClipboardConfig().maxAgeDays == 7, "重新加载后保留天数应该是 7");
+        TEST_ASSERT(config.getClipboardConfig().maxCount == 500, "重新加载后最大条数应该是 500");
+        TEST_ASSERT(config.getClipboardConfig().hotkey == "Cmd+Alt+V", "重新加载后快捷键应该是 Cmd+Alt+V");
+        
+        // 恢复默认值以便后续测试
+        config.resetToDefaults();
+        config.save();
+        
+        TEST_PASS("testClipboardConfigPersistence: 剪贴板配置持久化正常");
+        return true;
+    }
+    
     // ========== 信号测试 ==========
     
     bool testSignals() {
@@ -364,6 +469,7 @@ private:
         QSignalSpy configChangedSpy(&config, &suyan::ConfigManager::configChanged);
         QSignalSpy layoutChangedSpy(&config, &suyan::ConfigManager::layoutConfigChanged);
         QSignalSpy themeChangedSpy(&config, &suyan::ConfigManager::themeConfigChanged);
+        QSignalSpy clipboardChangedSpy(&config, &suyan::ConfigManager::clipboardConfigChanged);
         
         // 修改布局配置
         config.setLayoutType(suyan::LayoutType::Vertical);
@@ -375,6 +481,11 @@ private:
         config.setThemeMode(suyan::ThemeMode::Dark);
         
         TEST_ASSERT(themeChangedSpy.count() >= 1, "themeConfigChanged 信号应该被发送");
+        
+        // 修改剪贴板配置
+        config.setClipboardEnabled(false);
+        
+        TEST_ASSERT(clipboardChangedSpy.count() >= 1, "clipboardConfigChanged 信号应该被发送");
         
         // 恢复默认值
         config.resetToDefaults();

@@ -46,6 +46,11 @@
 #include "frequency_manager.h"
 #include "suyan_ui_init.h"
 
+// 剪贴板模块
+#include "clipboard_manager.h"
+#include "clipboard_window.h"
+#include "hotkey_manager.h"
+
 // 再次取消 rime_api.h 可能定义的 Bool
 #ifdef Bool
 #undef Bool
@@ -61,6 +66,8 @@ static IMKServer* g_imkServer = nil;
 static InputEngine* g_inputEngine = nullptr;
 static CandidateWindow* g_candidateWindow = nullptr;
 static MacOSBridge* g_macosBridge = nullptr;
+static ClipboardWindow* g_clipboardWindow = nullptr;
+static QTimer* g_cleanupTimer = nullptr;
 
 // ============================================
 // 路径获取函数
@@ -320,6 +327,163 @@ static bool initializeUIComponents() {
 }
 
 /**
+ * 初始化剪贴板模块
+ *
+ * 初始化 ClipboardManager、HotkeyManager 和 ClipboardWindow，
+ * 并连接快捷键触发信号到窗口显示切换。
+ */
+static bool initializeClipboard() {
+    QString userDir = getUserDataDir();
+    
+    // 获取剪贴板配置
+    auto& configMgr = ConfigManager::instance();
+    ClipboardConfig clipboardConfig = configMgr.getClipboardConfig();
+    
+    // 如果剪贴板功能未启用，跳过初始化
+    if (!clipboardConfig.enabled) {
+        qDebug() << "SuYan: Clipboard feature disabled in config";
+        return true;
+    }
+    
+    // 1. 初始化 ClipboardManager
+    auto& clipboardMgr = ClipboardManager::instance();
+    if (!clipboardMgr.initialize(userDir.toStdString())) {
+        qWarning() << "SuYan: Failed to initialize ClipboardManager";
+        return false;
+    }
+    
+    // 应用配置
+    clipboardMgr.setMaxAgeDays(clipboardConfig.maxAgeDays);
+    clipboardMgr.setMaxCount(clipboardConfig.maxCount);
+    
+    qDebug() << "SuYan: ClipboardManager initialized";
+    
+    // 2. 初始化 HotkeyManager
+    auto& hotkeyMgr = HotkeyManager::instance();
+    if (!hotkeyMgr.initialize()) {
+        qWarning() << "SuYan: Failed to initialize HotkeyManager";
+        // 不是致命错误，继续但快捷键功能不可用
+    } else {
+        qDebug() << "SuYan: HotkeyManager initialized";
+    }
+    
+    // 3. 创建 ClipboardWindow
+    g_clipboardWindow = new ClipboardWindow();
+    qDebug() << "SuYan: ClipboardWindow created";
+    
+    // 4. 注册快捷键并连接信号
+    if (hotkeyMgr.isInitialized()) {
+        // 从配置读取快捷键
+        Hotkey hotkey = Hotkey::fromString(clipboardConfig.hotkey);
+        
+        if (hotkey.isValid()) {
+            // 注册快捷键
+            if (hotkeyMgr.registerHotkey("clipboard_toggle", hotkey)) {
+                qDebug() << "SuYan: Clipboard hotkey registered:" 
+                         << QString::fromStdString(clipboardConfig.hotkey);
+            } else {
+                qWarning() << "SuYan: Failed to register clipboard hotkey:" 
+                           << QString::fromStdString(clipboardConfig.hotkey);
+            }
+        } else {
+            qWarning() << "SuYan: Invalid clipboard hotkey in config:" 
+                       << QString::fromStdString(clipboardConfig.hotkey);
+        }
+        
+        // 连接快捷键触发信号到窗口切换
+        QObject::connect(&hotkeyMgr, &HotkeyManager::hotkeyTriggered,
+                         g_clipboardWindow, [](const QString& name) {
+            if (name == "clipboard_toggle" && g_clipboardWindow) {
+                g_clipboardWindow->toggleVisibility();
+            }
+        });
+        
+        qDebug() << "SuYan: Hotkey signal connected to ClipboardWindow";
+    }
+    
+    // 5. 连接 ClipboardWindow 的 recordSelected 信号到 ClipboardManager 的 pasteRecord
+    QObject::connect(g_clipboardWindow, &ClipboardWindow::recordSelected,
+                     [](int64_t recordId) {
+        ClipboardManager::instance().pasteRecord(recordId);
+    });
+    
+    // 6. 连接 ClipboardManager 的 pasteCompleted 信号到窗口隐藏
+    // 粘贴完成后（无论成功与否）隐藏窗口
+    QObject::connect(&clipboardMgr, &ClipboardManager::pasteCompleted,
+                     g_clipboardWindow, [](int64_t recordId, bool success) {
+        Q_UNUSED(recordId);
+        if (g_clipboardWindow) {
+            g_clipboardWindow->hideWindow();
+            if (!success) {
+                qWarning() << "SuYan: Paste failed for record:" << recordId;
+            }
+        }
+    });
+    
+    // 6.1 连接 ClipboardManager 的 recordAdded 信号到窗口刷新
+    // 当有新记录添加时，刷新窗口列表
+    QObject::connect(&clipboardMgr, &ClipboardManager::recordAdded,
+                     g_clipboardWindow, [](const ClipboardRecord& record) {
+        Q_UNUSED(record);
+        if (g_clipboardWindow) {
+            g_clipboardWindow->refreshList();
+        }
+    });
+    
+    // 7. 连接配置变更信号，以便在配置变更时更新快捷键
+    QObject::connect(&configMgr, &ConfigManager::clipboardConfigChanged,
+                     [](const ClipboardConfig& newConfig) {
+        auto& hotkeyMgr = HotkeyManager::instance();
+        auto& clipboardMgr = ClipboardManager::instance();
+        
+        // 更新启用状态
+        clipboardMgr.setEnabled(newConfig.enabled);
+        clipboardMgr.setMaxAgeDays(newConfig.maxAgeDays);
+        clipboardMgr.setMaxCount(newConfig.maxCount);
+        
+        // 更新快捷键
+        if (hotkeyMgr.isInitialized()) {
+            Hotkey newHotkey = Hotkey::fromString(newConfig.hotkey);
+            if (newHotkey.isValid()) {
+                hotkeyMgr.updateHotkey("clipboard_toggle", newHotkey);
+                qDebug() << "SuYan: Clipboard hotkey updated:" 
+                         << QString::fromStdString(newConfig.hotkey);
+            }
+        }
+        
+        // 根据启用状态控制监听
+        if (newConfig.enabled && !clipboardMgr.isMonitoring()) {
+            clipboardMgr.startMonitoring();
+        } else if (!newConfig.enabled && clipboardMgr.isMonitoring()) {
+            clipboardMgr.stopMonitoring();
+        }
+    });
+
+    // 8. 启动剪贴板监听
+    if (clipboardMgr.startMonitoring()) {
+        qDebug() << "SuYan: Clipboard monitoring started";
+    } else {
+        qWarning() << "SuYan: Failed to start clipboard monitoring";
+    }
+    
+    // 9. 设置定时清理任务（每小时执行一次）
+    g_cleanupTimer = new QTimer();
+    QObject::connect(g_cleanupTimer, &QTimer::timeout, []() {
+        qDebug() << "SuYan: Running scheduled clipboard cleanup";
+        ClipboardManager::instance().performCleanup();
+    });
+    // 每小时执行一次清理（3600000 毫秒 = 1 小时）
+    g_cleanupTimer->start(3600000);
+    
+    // 10. 应用启动时执行一次清理
+    clipboardMgr.performCleanup();
+    qDebug() << "SuYan: Initial clipboard cleanup completed";
+    
+    qDebug() << "SuYan: Clipboard module initialized";
+    return true;
+}
+
+/**
  * 创建 IMKServer
  */
 static bool createIMKServer() {
@@ -355,6 +519,25 @@ static bool createIMKServer() {
 
 static void cleanup() {
     qDebug() << "SuYan: Cleaning up...";
+    
+    // 停止并清理定时清理任务
+    if (g_cleanupTimer) {
+        g_cleanupTimer->stop();
+        delete g_cleanupTimer;
+        g_cleanupTimer = nullptr;
+    }
+    
+    // 清理剪贴板模块
+    if (g_clipboardWindow) {
+        delete g_clipboardWindow;
+        g_clipboardWindow = nullptr;
+    }
+    
+    // 关闭 HotkeyManager
+    HotkeyManager::instance().shutdown();
+    
+    // 关闭 ClipboardManager
+    ClipboardManager::instance().shutdown();
     
     // 清理 UI
     if (g_candidateWindow) {
@@ -462,18 +645,24 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        // 6. 设置全局 InputEngine 和 CandidateWindow 供 IMKBridge 使用
+        // 6. 初始化剪贴板模块（快捷键、窗口）
+        if (!initializeClipboard()) {
+            qWarning() << "SuYan: Clipboard initialization failed (feature will be unavailable)";
+            // 不是致命错误，继续运行
+        }
+        
+        // 7. 设置全局 InputEngine 和 CandidateWindow 供 IMKBridge 使用
         SuYanIMK_SetInputEngine(g_inputEngine);
         SuYanIMK_SetCandidateWindow(g_candidateWindow);
         
         qDebug() << "SuYan: Input method started successfully";
         
-        // 7. 注册清理函数
+        // 8. 注册清理函数
         QObject::connect(&app, &QCoreApplication::aboutToQuit, []() {
             cleanup();
         });
         
-        // 8. 启动事件循环
+        // 9. 启动事件循环
         //
         // Qt 事件循环与 macOS RunLoop 兼容性说明：
         //

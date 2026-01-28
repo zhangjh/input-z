@@ -49,6 +49,100 @@ set_target_properties(frequency_manager_test PROPERTIES
     INSTALL_RPATH "${LIBRIME_LIB_DIR}"
 )
 
+# ========== 剪贴板模块单元测试 ==========
+
+# ClipboardStore 单元测试
+add_executable(clipboard_store_test clipboard/clipboard_store_test.cpp)
+target_link_libraries(clipboard_store_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Test
+)
+set_target_properties(clipboard_store_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+)
+
+# ImageStorage 单元测试
+add_executable(image_storage_test clipboard/image_storage_test.cpp)
+target_link_libraries(image_storage_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Gui
+    Qt6::Test
+)
+set_target_properties(image_storage_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+)
+
+# 存储层功能验证测试（Task 5 Checkpoint）
+add_executable(storage_validation_test clipboard/storage_validation_test.cpp)
+target_link_libraries(storage_validation_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Gui
+    Qt6::Test
+)
+set_target_properties(storage_validation_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+)
+
+# ClipboardManager 单元测试
+add_executable(clipboard_manager_test clipboard/clipboard_manager_test.cpp)
+target_link_libraries(clipboard_manager_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Gui
+    Qt6::Test
+)
+set_target_properties(clipboard_manager_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+)
+
+# ClipboardManager 集成测试（Task 9 Checkpoint）
+add_executable(clipboard_integration_test clipboard/clipboard_integration_test.cpp)
+target_link_libraries(clipboard_integration_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Gui
+    Qt6::Test
+)
+set_target_properties(clipboard_integration_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+    AUTOMOC ON
+)
+
+# ClipboardWindow UI 层测试（Task 13 Checkpoint）
+add_executable(clipboard_ui_test clipboard/clipboard_ui_test.cpp)
+target_link_libraries(clipboard_ui_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Test
+)
+set_target_properties(clipboard_ui_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+    AUTOMOC ON
+)
+
+# 剪贴板性能测试（Task 20）
+add_executable(clipboard_performance_test clipboard/performance_test.cpp)
+target_link_libraries(clipboard_performance_test PRIVATE 
+    suyan_clipboard 
+    Qt6::Core 
+    Qt6::Test
+)
+set_target_properties(clipboard_performance_test PROPERTIES
+    BUILD_RPATH "${LIBRIME_LIB_DIR}"
+    INSTALL_RPATH "${LIBRIME_LIB_DIR}"
+)
+
 # ========== UI 层测试 ==========
 
 # UI 测试程序
