@@ -45,7 +45,7 @@ Theme Theme::defaultLight() {
     
     // 间距
     theme.candidateSpacing = 8;
-    theme.padding = 10;
+    theme.padding = 4;
     
     return theme;
 }
@@ -73,7 +73,7 @@ Theme Theme::defaultDark() {
     
     // 间距
     theme.candidateSpacing = 8;
-    theme.padding = 10;
+    theme.padding = 4;
     
     return theme;
 }

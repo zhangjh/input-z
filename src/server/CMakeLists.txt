@@ -36,6 +36,7 @@ target_link_libraries(SuYanServer PRIVATE
 target_include_directories(SuYanServer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/ui
+    ${CMAKE_SOURCE_DIR}/src/shared
 )
 
 set_target_properties(SuYanServer PROPERTIES

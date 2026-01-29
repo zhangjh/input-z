@@ -6,6 +6,7 @@
 #include <QPoint>
 #include <memory>
 #include "ipc_channel.h"
+#include "ipc_protocol.h"
 
 namespace suyan {
 
@@ -24,6 +25,7 @@ public:
 
 private slots:
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
+    void onSettings();
     void onQuit();
 
 private:
@@ -39,6 +41,7 @@ private:
     QMenu* m_trayMenu;
     std::wstring m_commitText;
     QPoint m_cursorPos;
+    int m_cursorHeight = 20;
 };
 
 } // namespace suyan

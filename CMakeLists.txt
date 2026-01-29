@@ -65,10 +65,10 @@ elseif(WIN32)
     message(STATUS "Target architecture: ${SUYAN_ARCH}")
     message(STATUS "librime library: ${LIBRIME_LIB_DIR}")
     
-    # 32位只构建轻量级TSF客户端，不需要Qt和librime
+    # 32位只构建轻量级TSF DLL，不需要Qt和librime
     if(NOT SUYAN_BUILD_FULL)
-        message(STATUS "Building 32-bit TSF client only (no Qt/RIME)")
-        add_subdirectory(src/platform/windows/tsf_client)
+        message(STATUS "Building 32-bit TSF DLL only (no Qt/RIME)")
+        add_subdirectory(src/platform/windows/tsf_dll)
         return()
     endif()
     

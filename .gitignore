@@ -49,6 +49,7 @@ Thumbs.db
 # Package/Installer output files
 *.pkg
 *.dmg
+*.exe
 *.msi
 *.zip
 *.tar.gz
@@ -115,3 +116,4 @@ __pycache__/
 
 # Kiro IDE 配置
 .kiro/
+.claude/settings.local.json

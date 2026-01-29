@@ -215,18 +215,40 @@ void resetKeyboardState() {
 // Windows 平台
 #include <windows.h>
 
-// Windows 平台的测试辅助函数（实际上无法修改系统键盘状态）
+// Windows 平台使用模拟键盘状态进行测试
+static unsigned char g_keyboardState[256] = {0};
+static bool g_capsLockOn = false;
+
+// 重写 GetKeyState 用于测试
+#undef GetKeyState
+SHORT GetKeyState(int vk) {
+    SHORT result = 0;
+    if (g_keyboardState[vk] & 0x80) {
+        result |= 0x8000;
+    }
+    if (vk == VK_CAPITAL && g_capsLockOn) {
+        result |= 0x0001;
+    }
+    return result;
+}
+
 void setKeyDown(int vk, bool down) {
-    // Windows 平台上无法直接修改键盘状态
-    // 这些测试在 Windows 上需要不同的方法
+    if (down) {
+        g_keyboardState[vk] |= 0x80;
+    } else {
+        g_keyboardState[vk] &= ~0x80;
+    }
 }
 
 void setCapsLock(bool on) {
-    // Windows 平台上无法直接修改 Caps Lock 状态
+    g_capsLockOn = on;
 }
 
 void resetKeyboardState() {
-    // Windows 平台上无法重置键盘状态
+    for (int i = 0; i < 256; i++) {
+        g_keyboardState[i] = 0;
+    }
+    g_capsLockOn = false;
 }
 
 #endif // _WIN32

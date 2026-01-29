@@ -1,4 +1,4 @@
-LIBRARY SuYan32
+LIBRARY SuYan
 EXPORTS
     DllGetClassObject   PRIVATE
     DllCanUnloadNow     PRIVATE

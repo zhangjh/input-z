@@ -1,4 +1,4 @@
-; ============================================
+﻿; ============================================
 ; SuYan Input Method - NSIS Installer Script
 ; ============================================
 ; Requirements: 11.1, 11.2, 11.3
@@ -90,16 +90,27 @@ Section "MainSection" SEC01
     SetOverwrite on
 
     ; ========================================
-    ; Core DLL and Dependencies
+    ; TSF DLLs - Install to System Directories
     ; ========================================
+    ; 64-bit TSF DLL -> System32 (for 64-bit applications)
+    SetOutPath "$SYSDIR"
     File "..\build-win\bin\Release\SuYan.dll"
     
-    ; 32-bit TSF client for 32-bit applications
-    File /nonfatal "..\build-win\bin\Release\SuYan32.dll"
+    ; 32-bit TSF DLL -> SysWOW64 (for 32-bit applications on 64-bit Windows)
+    ${If} ${RunningX64}
+        SetOutPath "$WINDIR\SysWOW64"
+        File /nonfatal "..\build-win\bin\Release\SuYan32.dll"
+    ${EndIf}
     
-    ; Background server process
+    ; ========================================
+    ; Server and Dependencies - Install to Program Directory
+    ; ========================================
+    SetOutPath "$INSTDIR"
+    
+    ; Background server process (hosts RIME engine and candidate window)
     File "..\build-win\bin\Release\SuYanServer.exe"
     
+    ; RIME engine and dependencies (only needed by SuYanServer)
     File "..\build-win\bin\Release\rime.dll"
     File "..\build-win\bin\Release\sqlite3.dll"
     File "..\build-win\bin\Release\yaml-cpp.dll"
@@ -193,16 +204,20 @@ Section "MainSection" SEC01
     File "..\data\rime\opencc\*.txt"
     
     ; ========================================
-    ; Register COM Component (TSF)
+    ; Register TSF DLLs
     ; ========================================
-    SetOutPath "$INSTDIR"
+    ; Register the 64-bit DLL from System32
+    ExecWait 'regsvr32.exe /s "$SYSDIR\SuYan.dll"'
     
-    ; Register the 64-bit DLL
-    ExecWait 'regsvr32.exe /s "$INSTDIR\SuYan.dll"'
+    ; Register the 32-bit DLL from SysWOW64 (if exists)
+    ${If} ${RunningX64}
+        IfFileExists "$WINDIR\SysWOW64\SuYan32.dll" 0 +2
+            ExecWait '$WINDIR\SysWOW64\regsvr32.exe /s "$WINDIR\SysWOW64\SuYan32.dll"'
+    ${EndIf}
     
-    ; Register the 32-bit DLL (if exists)
-    IfFileExists "$INSTDIR\SuYan32.dll" 0 +2
-        ExecWait 'regsvr32.exe /s "$INSTDIR\SuYan32.dll"'
+    ; Store DLL paths in registry for uninstaller
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DLL64Path" "$SYSDIR\SuYan.dll"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DLL32Path" "$WINDIR\SysWOW64\SuYan32.dll"
     
     ; ========================================
     ; Create Start Menu Shortcuts
@@ -239,14 +254,21 @@ Section "Uninstall"
     SetShellVarContext all
     
     ; ========================================
-    ; Unregister COM Component (TSF)
+    ; Stop SuYanServer if running
     ; ========================================
-    ; Unregister 32-bit DLL first (if exists)
-    IfFileExists "$INSTDIR\SuYan32.dll" 0 +2
-        ExecWait 'regsvr32.exe /u /s "$INSTDIR\SuYan32.dll"'
+    ExecWait 'taskkill /F /IM SuYanServer.exe' $0
     
-    ; Unregister 64-bit DLL
-    ExecWait 'regsvr32.exe /u /s "$INSTDIR\SuYan.dll"'
+    ; ========================================
+    ; Unregister TSF DLLs
+    ; ========================================
+    ; Unregister 32-bit DLL from SysWOW64 first (if exists)
+    ${If} ${RunningX64}
+        IfFileExists "$WINDIR\SysWOW64\SuYan32.dll" 0 +2
+            ExecWait '$WINDIR\SysWOW64\regsvr32.exe /u /s "$WINDIR\SysWOW64\SuYan32.dll"'
+    ${EndIf}
+    
+    ; Unregister 64-bit DLL from System32
+    ExecWait 'regsvr32.exe /u /s "$SYSDIR\SuYan.dll"'
     
     ; ========================================
     ; Remove Start Menu Shortcuts
@@ -257,9 +279,13 @@ Section "Uninstall"
     ; ========================================
     ; Remove Installation Files
     ; ========================================
-    ; Core DLLs
-    Delete "$INSTDIR\SuYan.dll"
-    Delete "$INSTDIR\SuYan32.dll"
+    ; TSF DLLs from system directories
+    Delete "$SYSDIR\SuYan.dll"
+    ${If} ${RunningX64}
+        Delete "$WINDIR\SysWOW64\SuYan32.dll"
+    ${EndIf}
+    
+    ; Server and dependencies from program directory
     Delete "$INSTDIR\SuYanServer.exe"
     Delete "$INSTDIR\rime.dll"
     Delete "$INSTDIR\sqlite3.dll"

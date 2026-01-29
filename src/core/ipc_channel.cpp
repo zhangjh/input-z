@@ -5,10 +5,6 @@
 
 namespace suyan {
 
-std::wstring GetPipeName() {
-    return L"\\\\.\\pipe\\SuYanInputMethod";
-}
-
 // ============================================
 // IPCClient
 // ============================================

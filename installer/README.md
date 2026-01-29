@@ -43,9 +43,34 @@ build_installer.bat
 
 ## What Gets Installed
 
-- `SuYan.dll` - 64-bit TSF DLL (full functionality)
-- `SuYan32.dll` - 32-bit TSF client (IPC to 64-bit)
-- Qt6 runtime, RIME engine, themes, icons
+The installer deploys a centralized server architecture:
+
+### TSF DLLs (System Directories)
+- `C:\Windows\System32\SuYan.dll` - 64-bit TSF DLL for 64-bit applications
+- `C:\Windows\SysWOW64\SuYan32.dll` - 32-bit TSF DLL for 32-bit applications (e.g., 企业微信)
+
+### Server and Dependencies (Program Directory)
+- `SuYanServer.exe` - Background server hosting RIME engine and candidate window
+- Qt6 runtime DLLs (Qt6Core, Qt6Gui, Qt6Widgets, etc.)
+- `rime.dll` - RIME input method engine
+- RIME data files, themes, icons
+
+### Architecture
+```
+64-bit App          32-bit App
+    │                   │
+    ▼                   ▼
+SuYan.dll          SuYan32.dll
+(System32)         (SysWOW64)
+    │                   │
+    └───────┬───────────┘
+            │ Named Pipe IPC
+            ▼
+      SuYanServer.exe
+      (Program Files)
+```
+
+The DLLs are pure Win32 IPC clients with no Qt/RIME dependencies. All heavy lifting happens in SuYanServer.
 
 ## Installation Options
 
@@ -81,17 +106,11 @@ REM Uninstall and remove user data
 uninst.exe /S /CLEANDATA
 ```
 
-## What Gets Installed
-
-- `SuYan.dll` - Main TSF input method DLL
-- Qt6 runtime DLLs
-- RIME engine and data files
-- Theme files
-- Icons
-
 ## Installation Locations
 
-- **Program Files**: `C:\Program Files\SuYan\`
+- **System32**: `C:\Windows\System32\SuYan.dll` (64-bit TSF DLL)
+- **SysWOW64**: `C:\Windows\SysWOW64\SuYan32.dll` (32-bit TSF DLL)
+- **Program Files**: `C:\Program Files\SuYan\` (Server, Qt, RIME, data)
 - **User Data**: `%APPDATA%\SuYan\` (created on first use)
 - **Start Menu**: `Start Menu\Programs\SuYan\`
 

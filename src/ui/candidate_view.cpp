@@ -311,7 +311,7 @@ void CandidateView::drawPreedit(QPainter& painter, int& yOffset) {
                    width() - theme_.padding * 2, textHeight);
     painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, preedit_);
     
-    yOffset += textHeight + theme_.candidateSpacing;
+    yOffset += textHeight + 2;
 }
 
 void CandidateView::drawCandidatesHorizontal(QPainter& painter, int yOffset) {
@@ -677,13 +677,14 @@ int CandidateView::calculatePreeditHeight() const {
     
     QFont font = getPreeditFont();
     QFontMetrics fm(font);
-    return fm.height();
+    return fm.height() + 2;
 }
 
 int CandidateView::calculateCandidateHeight() const {
     QFont font = getCandidateFont();
     QFontMetrics fm(font);
-    return fm.height() + 8;  // 添加上下内边距
+    int textHeight = std::max(fm.height(), fm.lineSpacing());
+    return textHeight + 8;
 }
 
 int CandidateView::calculateCandidateWidth(const CandidateItem& candidate) const {

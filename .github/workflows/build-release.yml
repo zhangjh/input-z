@@ -453,7 +453,7 @@ jobs:
           
           cmake --build $buildDir --config Release
       
-      - name: Configure and Build x86 (TSF client only)
+      - name: Configure and Build x86 (TSF DLL only)
         shell: pwsh
         run: |
           $buildDir = "build-win-x86"
@@ -461,12 +461,12 @@ jobs:
           
           cmake -G "Visual Studio 17 2022" -A Win32 -S . -B $buildDir
           
-          cmake --build $buildDir --config Release --target SuYanTSFClient
+          cmake --build $buildDir --config Release --target SuYanTSF
       
       - name: Copy 32-bit DLL
         shell: pwsh
         run: |
-          Copy-Item "build-win-x86\src\platform\windows\tsf_client\Release\SuYan32.dll" `
+          Copy-Item "build-win-x86\src\platform\windows\tsf_dll\Release\SuYan32.dll" `
             "build-win\bin\Release\" -Force
       
       - name: Copy dependency DLLs

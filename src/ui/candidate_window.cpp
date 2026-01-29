@@ -86,27 +86,19 @@ void CandidateWindow::initWindowFlags() {
 // ========== 候选词更新 ==========
 
 void CandidateWindow::updateCandidates(const InputState& state) {
-    // 更新候选词视图
     candidateView_->updateFromState(state);
     
-    // 如果不在输入状态，隐藏窗口
-    if (!state.isComposing) {
-        hideWindow();
-        return;
-    }
+    // Property 5: 候选词窗口可见性 = (isComposing && !candidates.empty())
+    bool shouldBeVisible = state.isComposing && !state.candidates.empty();
     
-    // 如果有 preedit 或候选词，显示窗口
-    if (!state.preedit.empty() || !state.candidates.empty()) {
-        // 调整窗口大小
+    if (shouldBeVisible) {
         QSize newSize = candidateView_->sizeHint();
         resize(newSize);
         
-        // 如果窗口已定位，更新位置
         if (positionInitialized_) {
             updatePosition();
         }
     } else {
-        // 没有 preedit 也没有候选词，隐藏窗口
         hideWindow();
     }
 }
@@ -120,31 +112,26 @@ void CandidateWindow::clearCandidates() {
 // ========== 窗口显示控制 ==========
 
 void CandidateWindow::showAt(const QPoint& cursorPos) {
-#ifndef Q_OS_WIN
+#ifdef Q_OS_WIN
+    QRect cursorRect(cursorPos.x(), cursorPos.y(), 1, 20);
+    showAtNative(cursorRect);
+#else
     lastCursorPos_ = cursorPos;
     positionInitialized_ = true;
     
-    // 计算窗口位置
     QSize windowSize = candidateView_->sizeHint();
     resize(windowSize);
     
     QPoint windowPos = calculateWindowPosition(cursorPos, windowSize);
     move(windowPos);
     
-    // 显示窗口
     if (!isVisible()) {
         show();
     }
     
-    // 确保在全屏应用中可见
 #if defined(Q_OS_MACOS)
     ensureVisibleInFullScreen();
 #endif
-
-#else
-    // Windows implementation is handled by showAtNative()
-    // This is kept as stub to satisfy linker/interface
-    Q_UNUSED(cursorPos);
 #endif
 }
 
@@ -216,49 +203,48 @@ void CandidateWindow::updatePosition() {
 
 void CandidateWindow::showAtNative(const QRect& cursorRect) {
 #ifdef _WIN32
+    QSize newSize = candidateView_->sizeHint();
+    resize(newSize);
+    
+    HWND hwnd = (HWND)winId();
+    if (!hwnd) return;
+    
+    int w = newSize.width();
+    int h = newSize.height();
+    
+    POINT targetPt = { cursorRect.left(), cursorRect.bottom() };
+    HMONITOR hMon = MonitorFromPoint(targetPt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi;
+    mi.cbSize = sizeof(MONITORINFO);
+    GetMonitorInfoW(hMon, &mi);
+    
+    int x = cursorRect.left();
+    int y = cursorRect.bottom() + 2;
+    
+    if (x + w > mi.rcWork.right) {
+        x = mi.rcWork.right - w;
+        if (x < mi.rcWork.left) {
+            x = mi.rcWork.left;
+        }
+    }
+    
+    if (y + h > mi.rcWork.bottom) {
+        int topY = cursorRect.top() - h - 5;
+        if (topY >= mi.rcWork.top) {
+            y = topY;
+        } else {
+            y = mi.rcWork.bottom - h;
+        }
+    }
+    
     if (!isVisible()) {
         QWidget::setVisible(true);
     }
-    adjustSize();
     
-    HWND hwnd = (HWND)winId();
-    if (hwnd) {
-        RECT winRect;
-        GetWindowRect(hwnd, &winRect);
-        int w = winRect.right - winRect.left;
-        int h = winRect.bottom - winRect.top;
-        
-        POINT targetPt = { cursorRect.left(), cursorRect.bottom() };
-        HMONITOR hMon = MonitorFromPoint(targetPt, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi;
-        mi.cbSize = sizeof(MONITORINFO);
-        GetMonitorInfoW(hMon, &mi);
-        
-        int x = cursorRect.left();
-        int y = cursorRect.bottom() + 2;
-        
-        if (x + w > mi.rcWork.right) {
-            x = mi.rcWork.right - w;
-            if (x < mi.rcWork.left) {
-                x = mi.rcWork.left;
-            }
-        }
-        
-        if (y + h > mi.rcWork.bottom) {
-            int topY = cursorRect.top() - h - 5;
-            if (topY >= mi.rcWork.top) {
-                y = topY;
-            } else {
-                y = mi.rcWork.bottom - h;
-            }
-        }
-        
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, 
-                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        
-        lastCursorPos_ = QPoint(x, y);
-        positionInitialized_ = true;
-    }
+    SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    
+    lastCursorPos_ = cursorRect.bottomLeft();
+    positionInitialized_ = true;
 #else
     showAt(cursorRect.bottomLeft());
 #endif
@@ -328,10 +314,13 @@ void CandidateWindow::hideEvent(QHideEvent* event) {
 void CandidateWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     
-    // 窗口大小变化后，重新计算位置
+#ifndef Q_OS_WIN
+    // 窗口大小变化后，重新计算位置（仅非 Windows 平台）
+    // Windows 上由 showAtNative() 处理位置
     if (positionInitialized_ && isVisible()) {
         updatePosition();
     }
+#endif
 }
 
 // 非 macOS/Windows 平台的空实现

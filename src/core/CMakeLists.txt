@@ -37,6 +37,7 @@ add_library(suyan_core STATIC
 # 包含目录
 target_include_directories(suyan_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src/shared
     ${LIBRIME_INCLUDE_DIR}
 )
 
