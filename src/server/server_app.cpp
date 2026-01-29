@@ -1,16 +1,23 @@
+// Qt 头文件必须在 rime_api.h 之前包含
 #include "server_app.h"
-#include "input_engine.h"
 #include "candidate_window.h"
 #include "theme_manager.h"
-#include "rime_wrapper.h"
-#include "ipc_protocol.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QStandardPaths>
-#include <QDesktopServices>
-#include <QUrl>
-#include <QDebug>
+
+#ifdef Bool
+#undef Bool
+#endif
+
+#include "input_engine.h"
+#include "rime_wrapper.h"
+#include "ipc_protocol.h"
 #include <fstream>
+
+#ifdef Bool
+#undef Bool
+#endif
 
 namespace suyan {
 
@@ -21,20 +28,8 @@ static void ServerLog(const char* msg) {
     }
 }
 
-static bool IsIPCServerRunning() {
-    HANDLE pipe = CreateFileW(L"\\\\.\\pipe\\SuYanInputMethod", GENERIC_READ | GENERIC_WRITE,
-                               0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (pipe != INVALID_HANDLE_VALUE) {
-        CloseHandle(pipe);
-        return true;
-    }
-    return false;
-}
-
 ServerApp::ServerApp(QObject* parent)
-    : QObject(parent)
-    , m_trayIcon(nullptr)
-    , m_trayMenu(nullptr) {
+    : QObject(parent) {
 }
 
 ServerApp::~ServerApp() {
@@ -91,7 +86,6 @@ bool ServerApp::initialize() {
         return false;
     }
 
-    setupTrayIcon();
     return true;
 }
 
@@ -128,8 +122,16 @@ DWORD ServerApp::handleIPCRequest(const IPCMessage& msg, std::wstring& response)
             int keyCode = convertVirtualKeyToRimeKey(vk, modifiers);
             if (keyCode == 0) return 0;
             
+            char buf[128];
+            sprintf_s(buf, "IPC_PROCESS_KEY: vk=%d mod=%d keyCode=%d", vk, modifiers, keyCode);
+            ServerLog(buf);
+            
             m_commitText.clear();
             bool handled = m_inputEngine->processKeyEvent(keyCode, modifiers);
+            
+            sprintf_s(buf, "IPC_PROCESS_KEY: handled=%d commitText.size=%zu", handled ? 1 : 0, m_commitText.size());
+            ServerLog(buf);
+            
             return handled ? 1 : 0;
         }
 
@@ -185,11 +187,16 @@ DWORD ServerApp::handleIPCRequest(const IPCMessage& msg, std::wstring& response)
         }
 
         case IPC_COMMIT:
+            ServerLog("IPC_COMMIT received");
             if (!m_commitText.empty()) {
+                char buf[256];
+                sprintf_s(buf, "IPC_COMMIT: returning text, size=%zu", m_commitText.size());
+                ServerLog(buf);
                 response = m_commitText;
                 m_commitText.clear();
                 return 1;
             }
+            ServerLog("IPC_COMMIT: no text to commit");
             return 0;
 
         case IPC_SHUTDOWN:
@@ -199,40 +206,6 @@ DWORD ServerApp::handleIPCRequest(const IPCMessage& msg, std::wstring& response)
         default:
             return 0;
     }
-}
-
-void ServerApp::setupTrayIcon() {
-    m_trayMenu = new QMenu();
-    
-    QAction* settingsAction = m_trayMenu->addAction(QString::fromUtf8("设置(&S)"));
-    connect(settingsAction, &QAction::triggered, this, &ServerApp::onSettings);
-    
-    m_trayMenu->addSeparator();
-    
-    QAction* quitAction = m_trayMenu->addAction(QString::fromUtf8("退出(&Q)"));
-    connect(quitAction, &QAction::triggered, this, &ServerApp::onQuit);
-
-    m_trayIcon = new QSystemTrayIcon(this);
-    m_trayIcon->setIcon(QIcon(QCoreApplication::applicationDirPath() + "/icons/app-icon.ico"));
-    m_trayIcon->setToolTip(QString::fromUtf8("素言输入法"));
-    m_trayIcon->setContextMenu(m_trayMenu);
-    connect(m_trayIcon, &QSystemTrayIcon::activated, this, &ServerApp::onTrayActivated);
-    m_trayIcon->show();
-}
-
-void ServerApp::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
-    (void)reason;
-}
-
-void ServerApp::onSettings() {
-    QString userDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString rimeDir = userDataDir + "/rime";
-    QDesktopServices::openUrl(QUrl::fromLocalFile(rimeDir));
-}
-
-void ServerApp::onQuit() {
-    shutdown();
-    QCoreApplication::quit();
 }
 
 bool ServerApp::shouldProcessKey(int keyCode, int modifiers) {

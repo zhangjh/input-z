@@ -1,8 +1,6 @@
 #pragma once
 
-#include <QApplication>
-#include <QSystemTrayIcon>
-#include <QMenu>
+#include <QObject>
 #include <QPoint>
 #include <memory>
 #include "ipc_channel.h"
@@ -23,22 +21,14 @@ public:
     bool initialize();
     void shutdown();
 
-private slots:
-    void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
-    void onSettings();
-    void onQuit();
-
 private:
     DWORD handleIPCRequest(const IPCMessage& msg, std::wstring& response);
     bool shouldProcessKey(int keyCode, int modifiers);
     int convertVirtualKeyToRimeKey(int vk, int modifiers);
-    void setupTrayIcon();
 
     std::unique_ptr<IPCServer> m_ipcServer;
     std::unique_ptr<InputEngine> m_inputEngine;
     std::unique_ptr<CandidateWindow> m_candidateWindow;
-    QSystemTrayIcon* m_trayIcon;
-    QMenu* m_trayMenu;
     std::wstring m_commitText;
     QPoint m_cursorPos;
     int m_cursorHeight = 20;
